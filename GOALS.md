@@ -18,15 +18,14 @@ An AI-powered nutritionist co-pilot that makes creating and adjusting meal plans
 
 ## Success Criteria / Definition of Done
 - [ ] Substitution accuracy: suggested swaps keep carbs/protein/fats within ±5% at the meal and day level.
-- [ ] Performance: macro recomputation < 300ms for a single change; full 7-day plan recalculation < 1s.
+- [ ] Performance: macro recomputation < 1s for a single change; full 7-day plan recalculation < 5s.
 - [ ] Safety: zero allergen violations in automated tests; all suggestions respect declared restrictions.
 - [ ] Workflow efficiency: 5 substitutions on a 7-day plan completed in < 3 minutes by a test nutritionist.
 - [ ] Quality: no critical bugs; error rate in macro calculations < 1% against a validated test set.
 - [ ] Compliance/Other: stores minimal PII; data encrypted at rest and in transit.
 
 ## Metrics
-- Primary: time-to-adjust-plan (mins), suggestion acceptance rate (%), weekly active nutritionists.
-- Secondary: retention (D7/D30), session length, number of plans exported/shared, client satisfaction (CSAT).
+- Primary: time-to-adjust-plan (mins), suggestion acceptance rate (%)
 - Guardrails: macro error rate < 1%; allergen/incidents = 0; compute cost per adjusted plan < $X.
 
 ## Scope
@@ -43,11 +42,6 @@ An AI-powered nutritionist co-pilot that makes creating and adjusting meal plans
   - Grocery delivery integrations.
   - Long-form recipe generation with cooking steps (beyond simple ingredient-level swaps).
 
-## Stakeholders & Roles
-- Owner: Guilherme
-- Nutritionist advisors: <names>
-- Engineering/Design: <names>
-- Reviewers/Approvers: <names>
 
 ## Constraints & Assumptions
 - Constraints: solo/small team; limited budget; initial launch timeline < 12 weeks.
@@ -60,21 +54,9 @@ An AI-powered nutritionist co-pilot that makes creating and adjusting meal plans
 - Import complexity — Mitigation: start with a strict CSV/JSON template; expand parsers iteratively.
 - Privacy/security concerns — Mitigation: minimize PII; encryption; clear consent and data retention controls.
 
-## Milestones & Timeline
-- M1: Substitution + Macro Engine MVP; CSV/JSON import; basic editor.
-- M2: Preferences & allergies; export to PDF/CSV; acceptance/feedback loop; analytics.
-- M3: UX polish; roles/permissions; landing page + app-store style description; pilot with 3–5 nutritionists.
 
 ## Deliverables
 - Working web MVP with balanced swap suggestions and instant macro recompute.
-- API/SDK surface for substitutions and macro calculations.
-- Import/export templates; onboarding guide.
-- Landing page copy and app-store description.
-
-## Next 1–3 Actions
-- [ ] Select nutrition database and define internal food schema (units, macros, tolerances).
-- [ ] Implement substitution algorithm v1 and evaluation set (macro tolerance, taste/locale tags).
-- [ ] Build plan model and recomputation service; wire to basic plan editor and CSV/JSON import.
 
 ## Notes
 - Future: personalized suggestions that learn from client history; seasonal/context-aware menus; cost-aware planning.
