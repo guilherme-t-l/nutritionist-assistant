@@ -1,47 +1,15 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
-
-## Nutritionist Co‑Pilot (MVP)
-
-Implements Milestone M1 of `DEVELOPMENT_PLAN.md`:
-- Chat UI with streaming responses
-- API route `/api/chat` proxying to OpenAI via a provider abstraction
-- System prompt with role/scope/safety disclaimers
-- Ephemeral in‑memory session memory
-- Basic logging
-
-### Getting Started
-
-1) Copy envs:
-
-```bash
-cp .env.example .env.local
-```
-
-Set `OPENAI_API_KEY` in `.env.local`.
-
-2) Install dependencies:
-
-```bash
-npm install
-```
-
-3) Run the dev server:
-
-```bash
-npm run dev
-```
-
-Open [http://localhost:3000](http://localhost:3000) and try the Chat page.
-
-### Notes
-
-- Session memory is in‑process. It resets on server restarts and does not persist across instances.
-- Provider switch is wired for a `provider` query param but only OpenAI is implemented.
-- Minimal guardrails avoid medical diagnosis/treatment; responses include disclaimers as needed.
+Nutritionist Assistant web app (Next.js + Tailwind). Local-first chat via WebLLM with optional OpenAI server provider.
 
 ## Getting Started
 
-First, run the development server:
+Set env vars for server OpenAI (optional):
+
+```bash
+echo "OPENAI_API_KEY=..." > .env.local
+echo "OPENAI_MODEL=gpt-4o-mini" >> .env.local
+```
+
+Run the development server:
 
 ```bash
 npm run dev
@@ -53,11 +21,11 @@ pnpm dev
 bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+By default, the chat uses a local model in-browser. Use the provider dropdown to switch to OpenAI (requires `OPENAI_API_KEY`).
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to optimize [Geist](https://vercel.com/font).
 
 ## Learn More
 

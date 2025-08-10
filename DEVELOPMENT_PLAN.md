@@ -21,11 +21,11 @@ Enable users to chat with a nutritionist assistant that:
 - Responds coherently as a safe, helpful junior nutritionist
 - Remembers session context (lightweight memory)
 - Respects preferences/allergies when provided by user
-- Can be swapped between ChatGPT or similar providers
+- Can be swapped between different LLMs (Llama, ChatGPT or similar providers). 
 
 ### Target Outcome (2–5 days)
 - Web chat UI with streaming responses
-- Backend endpoint that proxies to LLM provider (OpenAI by default)
+- Backend endpoint that proxies to LLM provider
 - System prompt with role, scope, safety disclaimers
 - Minimal ephemeral memory (per session) and basic analytics/logging
 
