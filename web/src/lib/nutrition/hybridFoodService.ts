@@ -1,6 +1,7 @@
 import type { FoodItem } from "./types";
 import { FOOD_DATABASE, getFoodById as getLocalFoodById, searchFoods as searchLocalFoods } from "./foodDatabase";
 import { OpenFoodFactsClient, type OpenFoodFactsProduct } from "./openFoodFactsClient";
+import { UsdaFdcClient } from "./usdaFdcClient";
 
 export interface FoodSearchResult {
   foods: FoodItem[];
@@ -14,22 +15,34 @@ export interface FoodServiceOptions {
   enableOpenFoodFacts?: boolean;
   enableLocalDatabase?: boolean;
   enableUserContributions?: boolean;
+  enableUsdaFdc?: boolean;
+  usdaApiKey?: string;
+
   maxResults?: number;
   cacheResults?: boolean;
 }
 
 export class HybridFoodService {
   private openFoodFactsClient: OpenFoodFactsClient;
+  private usdaFdcClient?: UsdaFdcClient;
   private options: Required<FoodServiceOptions>;
   private cache: Map<string, { data: FoodItem[]; timestamp: number }> = new Map();
   private cacheExpiryMs: number = 5 * 60 * 1000; // 5 minutes
 
   constructor(options: FoodServiceOptions = {}) {
     this.openFoodFactsClient = new OpenFoodFactsClient();
+    
+    // Initialize USDA FDC client if API key is provided
+    if (options.enableUsdaFdc && options.usdaApiKey) {
+      this.usdaFdcClient = new UsdaFdcClient(options.usdaApiKey);
+    }
+    
     this.options = {
       enableOpenFoodFacts: true,
       enableLocalDatabase: true,
       enableUserContributions: true,
+      enableUsdaFdc: false,
+      usdaApiKey: undefined,
       maxResults: 50,
       cacheResults: true,
       ...options,
@@ -57,7 +70,7 @@ export class HybridFoodService {
     }
 
     const results: FoodItem[] = [];
-    let source: 'local' | 'open_food_facts' | 'hybrid' = 'local';
+    let source: 'local' | 'open_food_facts' | 'usda_fdc' | 'hybrid' = 'local';
 
     try {
       // 1. Try Open Food Facts first (primary source)
@@ -72,6 +85,37 @@ export class HybridFoodService {
           }
         } catch (error) {
           console.warn('Open Food Facts search failed, falling back to local database:', error);
+        }
+      }
+
+      // 1.5. Try USDA FDC if enabled and have fewer results
+      if (this.options.enableUsdaFdc && this.usdaFdcClient && results.length < this.options.maxResults) {
+        try {
+          const remainingSlots = Math.max(5, this.options.maxResults - results.length);
+          const usdaResults = await this.usdaFdcClient.search(query, Math.min(remainingSlots, 10));
+          
+          // Convert search results to full food details (limit to 5 for performance)
+          const detailedResults = await Promise.all(
+            usdaResults.slice(0, 5).map(async (searchResult) => {
+              try {
+                const foodDetail = await this.usdaFdcClient!.getFood(searchResult.fdcId);
+                return this.usdaFdcClient!.convertToFoodItem(foodDetail);
+              } catch (error) {
+                console.warn(`Failed to get USDA food details for ${searchResult.fdcId}:`, error);
+                return null;
+              }
+            })
+          );
+          
+          const validResults = detailedResults.filter(result => result !== null) as FoodItem[];
+          results.push(...validResults);
+          
+          if (validResults.length > 0) {
+            source = source === 'open_food_facts' ? 'hybrid' : 'usda_fdc';
+          }
+
+        } catch (error) {
+          console.warn('USDA FDC search failed:', error);
         }
       }
 
@@ -164,6 +208,19 @@ export class HybridFoodService {
         }
       } catch (error) {
         console.warn('Failed to fetch Open Food Facts product:', error);
+      }
+    }
+
+    // Check if it's a USDA FDC ID
+    if (id.startsWith('usda_') && this.options.enableUsdaFdc && this.usdaFdcClient) {
+      try {
+        const fdcId = parseInt(id.replace('usda_', ''));
+        if (!isNaN(fdcId)) {
+          const foodDetail = await this.usdaFdcClient.getFood(fdcId);
+          return this.usdaFdcClient.convertToFoodItem(foodDetail);
+        }
+      } catch (error) {
+        console.warn('Failed to fetch USDA FDC food:', error);
       }
     }
 
