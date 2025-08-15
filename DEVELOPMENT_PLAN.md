@@ -116,6 +116,7 @@ Objective: Parse foods/ingredients and compute macros consistently.
 - Define canonical units; implement conversion utilities
 - Implement macro calculator for items/meals/day
 - Add tests against a validated dataset (<1% error)
+- Create an extensive database with foods and their macros
 
 ## M3 — Smart Substitution Engine (±5% tolerance)
 Objective: Suggest balanced swaps within meal/day macro bounds.

@@ -1,48 +1,26 @@
 import type { FoodItem } from "./types";
+import { FOOD_DATABASE, getFoodById } from "./foodDatabase";
 
-// Minimal validated fixtures (approximate typical values)
-export const FOODS_FIXTURE: FoodItem[] = [
-  {
-    id: "oats_rolled",
-    name: "Rolled Oats",
-    basePortion: { quantity: 100, unit: "g" },
-    macrosPerBase: {
-      caloriesKcal: 389,
-      proteinG: 16.9,
-      carbsG: 66.3,
-      fatG: 6.9,
-      fiberG: 10.6,
-      sugarG: 0.0,
-    },
-  },
-  {
-    id: "milk_skim",
-    name: "Milk, skim",
-    basePortion: { quantity: 100, unit: "ml" },
-    densityGPerMl: 1.035, // approx
-    macrosPerBase: {
-      caloriesKcal: 34,
-      proteinG: 3.4,
-      carbsG: 5.0,
-      fatG: 0.1,
-      sugarG: 5.0,
-    },
-  },
-  {
-    id: "egg_whole",
-    name: "Egg, whole",
-    basePortion: { quantity: 50, unit: "g" }, // medium egg ~50g edible portion
-    macrosPerBase: {
-      caloriesKcal: 72,
-      proteinG: 6.3,
-      carbsG: 0.4,
-      fatG: 4.8,
-      sugarG: 0.2,
-    },
-  },
-];
+// Re-export the comprehensive database for backward compatibility
+export const FOODS_FIXTURE: FoodItem[] = FOOD_DATABASE;
 
+// Keep the piece map for foods that have known per-piece weights
 export const PIECE_MAP: Record<string, number> = {
-  egg_whole: 50, // grams per piece
+  egg_whole: 50, // grams per piece (medium egg)
+  egg_white: 33, // grams per piece (medium egg white)
+  egg_yolk: 17,  // grams per piece (medium egg yolk)
 };
+
+// Helper function to get foods by category for testing
+export function getTestFoodsByCategory(category: string): FoodItem[] {
+  const categoryMap: Record<string, string[]> = {
+    "grains": ["oats_rolled", "quinoa_cooked", "brown_rice_cooked"],
+    "proteins": ["chicken_breast_cooked", "egg_whole", "salmon_cooked"],
+    "vegetables": ["broccoli_raw", "spinach_raw", "carrots_raw"],
+    "fruits": ["banana_raw", "apple_raw", "strawberries_raw"],
+  };
+  
+  const foodIds = categoryMap[category.toLowerCase()] || [];
+  return FOOD_DATABASE.filter(food => foodIds.includes(food.id));
+}
 

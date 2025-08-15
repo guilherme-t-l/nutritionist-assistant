@@ -1,9 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { MacroEngine } from "@/lib/nutrition/macroEngine";
 import { FOODS_FIXTURE, PIECE_MAP } from "@/lib/nutrition/fixtures";
-import type { MealItemInput } from "@/lib/nutrition/types";
+import type { MealItemInput, AggregatedMacros } from "@/lib/nutrition/types";
 import { DEFAULT_MEALS, usePlan, type MealKey } from "@/lib/nutrition/planContext";
 
 type UnitOption = "g" | "ml" | "piece";
@@ -15,12 +15,33 @@ export default function PlanPanel() {
   const [newFoodId, setNewFoodId] = useState<string>(FOODS_FIXTURE[0]?.id ?? "");
   const [newQuantity, setNewQuantity] = useState<number>(100);
   const [newUnit, setNewUnit] = useState<UnitOption>("g");
+  const [macros, setMacros] = useState<{ total: AggregatedMacros; perMeal: AggregatedMacros[] }>({
+    total: { caloriesKcal: 0, proteinG: 0, carbsG: 0, fatG: 0, fiberG: 0, sugarG: 0 },
+    perMeal: []
+  });
 
   const engine = useMemo(() => new MacroEngine(FOODS_FIXTURE, { pieceToGramMap: PIECE_MAP }), []);
 
   const mealsArray = useMemo(() => DEFAULT_MEALS.map((m) => plan[m] ?? []), [plan]);
 
-  const macros = useMemo(() => engine.computeDayMacros(mealsArray), [engine, mealsArray]);
+  // Compute macros asynchronously
+  useEffect(() => {
+    const computeMacros = async () => {
+      try {
+        const computedMacros = await engine.computeDayMacros(mealsArray);
+        setMacros(computedMacros);
+      } catch (error) {
+        console.error('Error computing macros:', error);
+        // Set default values on error
+        setMacros({
+          total: { caloriesKcal: 0, proteinG: 0, carbsG: 0, fatG: 0, fiberG: 0, sugarG: 0 },
+          perMeal: []
+        });
+      }
+    };
+    
+    computeMacros();
+  }, [engine, mealsArray]);
 
   const addItem = () => {
     if (!newFoodId) return;
@@ -37,6 +58,16 @@ export default function PlanPanel() {
 
   const updateItem = (meal: MealKey, index: number, changes: Partial<MealItemInput>) => {
     updateItemCtx(meal, index, changes);
+  };
+
+  // Helper function to compute item macros safely
+  const computeItemMacros = async (foodId: string, portion: { quantity: number; unit: string }) => {
+    try {
+      return await engine.computeItemMacros(foodId, portion);
+    } catch (error) {
+      console.error('Error computing item macros:', error);
+      return { caloriesKcal: 0, proteinG: 0, carbsG: 0, fatG: 0, fiberG: 0, sugarG: 0 };
+    }
   };
 
   return (
@@ -102,10 +133,10 @@ export default function PlanPanel() {
             <div className="px-3 py-2 border-b border-white/10 text-sm text-slate-300 flex items-center justify-between">
               <div>{meal}</div>
               <div className="text-xs text-slate-400">
-                kcal {macros.perMeal[DEFAULT_MEALS.indexOf(meal)]?.caloriesKcal.toFixed(0)} · P
-                {macros.perMeal[DEFAULT_MEALS.indexOf(meal)]?.proteinG.toFixed(1)} · C
-                {macros.perMeal[DEFAULT_MEALS.indexOf(meal)]?.carbsG.toFixed(1)} · F
-                {macros.perMeal[DEFAULT_MEALS.indexOf(meal)]?.fatG.toFixed(1)}
+                kcal {macros.perMeal[DEFAULT_MEALS.indexOf(meal)]?.caloriesKcal.toFixed(0) || '0'} · P
+                {macros.perMeal[DEFAULT_MEALS.indexOf(meal)]?.proteinG.toFixed(1) || '0'} · C
+                {macros.perMeal[DEFAULT_MEALS.indexOf(meal)]?.carbsG.toFixed(1) || '0'} · F
+                {macros.perMeal[DEFAULT_MEALS.indexOf(meal)]?.fatG.toFixed(1) || '0'}
               </div>
             </div>
             <div className="p-3 space-y-2">
@@ -145,14 +176,7 @@ export default function PlanPanel() {
                     <option value="piece">piece</option>
                   </select>
                   <div className="text-xs text-slate-400 w-40">
-                    {(() => {
-                      try {
-                        const m = engine.computeItemMacros(item.foodId, item.portion);
-                        return `kcal ${m.caloriesKcal.toFixed(0)} · P${m.proteinG.toFixed(1)} C${m.carbsG.toFixed(1)} F${m.fatG.toFixed(1)}`;
-                      } catch (e) {
-                        return "—";
-                      }
-                    })()}
+                    <ItemMacros foodId={item.foodId} portion={item.portion} engine={engine} />
                   </div>
                   <button
                     className="justify-self-end text-red-300 hover:text-red-200 text-sm"
@@ -176,6 +200,39 @@ export default function PlanPanel() {
         </div>
       </div>
     </aside>
+  );
+}
+
+// Separate component to handle async macro computation for individual items
+function ItemMacros({ foodId, portion, engine }: { foodId: string; portion: { quantity: number; unit: string }; engine: MacroEngine }) {
+  const [macros, setMacros] = useState<AggregatedMacros>({ caloriesKcal: 0, proteinG: 0, carbsG: 0, fatG: 0, fiberG: 0, sugarG: 0 });
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const computeMacros = async () => {
+      try {
+        setLoading(true);
+        const computedMacros = await engine.computeItemMacros(foodId, portion);
+        setMacros(computedMacros);
+      } catch (error) {
+        console.error('Error computing item macros:', error);
+        setMacros({ caloriesKcal: 0, proteinG: 0, carbsG: 0, fatG: 0, fiberG: 0, sugarG: 0 });
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    computeMacros();
+  }, [foodId, portion, engine]);
+
+  if (loading) {
+    return <span>Loading...</span>;
+  }
+
+  return (
+    <span>
+      kcal {macros.caloriesKcal.toFixed(0)} · P{macros.proteinG.toFixed(1)} C{macros.carbsG.toFixed(1)} F{macros.fatG.toFixed(1)}
+    </span>
   );
 }
 
