@@ -4,17 +4,12 @@ import { useEffect, useMemo, useRef, useState, Suspense } from "react";
 import { WebLLMClient } from "@/lib/llm/webllmClient";
 import dynamic from "next/dynamic";
 import type { ChatMessage, Preferences } from "@/lib/llm/types";
-import { DEFAULT_MEALS, usePlan, type MealKey, usePlanDoc } from "@/lib/nutrition/planContext";
+import { usePlan, type MealKey, usePlanDoc } from "@/lib/nutrition/planContext";
 import type { MealItemInput } from "@/lib/nutrition/types";
 
 type Provider = "webllm" | "openai";
 
 // Fix dynamic imports with proper loading and error handling
-const PlanPanel = dynamic(() => import("./PlanPanel"), { 
-  ssr: false,
-  loading: () => <div className="p-4 text-slate-400">Loading plan panel...</div>
-});
-
 const PlanDocEditor = dynamic(() => import("./PlanDocEditor"), { 
   ssr: false,
   loading: () => <div className="p-4 text-slate-400">Loading editor...</div>
@@ -37,6 +32,7 @@ export default function Chat() {
   const [input, setInput] = useState("");
   const [isBusy, setIsBusy] = useState(false);
   const [status, setStatus] = useState("Ready");
+  const [sessionId, setSessionId] = useState<string>("");
   const [preferences, setPreferences] = useState<Preferences>({
     allergies: [],
     dislikes: [],
@@ -66,7 +62,7 @@ export default function Chat() {
     };
     return {
       meal: mealMap[mealStr.toLowerCase()],
-      item: { foodId: food, portion: { quantity: Number(qty), unit } as any },
+      item: { foodId: food, portion: { quantity: Number(qty), unit: unit as "g" | "ml" | "piece" } },
     };
   };
 
@@ -136,7 +132,7 @@ export default function Chat() {
         // Attempt to sync plan doc from the final assistant message
         try {
           maybeUpdateDocFromAssistant(assistantContent);
-        } catch (_) {
+        } catch {
           // no-op if parsing fails
         }
         setIsBusy(false);
@@ -151,7 +147,12 @@ export default function Chat() {
       const resp = await fetch(`/api/chat?provider=openai`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ messages: nextMessages, preferences, planDoc: doc }),
+        body: JSON.stringify({ 
+          messages: [{ role: "user", content: text }], // Send only the new message
+          preferences, 
+          planDoc: doc,
+          sessionId: sessionId || undefined 
+        }),
       });
       if (!resp.ok || !resp.body) throw new Error(`Request failed: ${resp.status}`);
       const reader = resp.body.getReader();
@@ -165,6 +166,16 @@ export default function Chat() {
         const lines = chunk.split(/\n\n/).filter(Boolean);
         for (const line of lines) {
           if (line.includes("[DONE]")) continue;
+          
+          // Handle sessionId event
+          if (line.startsWith("event: sessionId")) {
+            const sessionIdMatch = line.match(/data: (.+)/);
+            if (sessionIdMatch) {
+              setSessionId(sessionIdMatch[1]);
+            }
+            continue;
+          }
+          
           const dataIdx = line.indexOf("data:");
           if (dataIdx !== -1) {
             const data = line.slice(dataIdx + 5).trim();
@@ -181,7 +192,7 @@ export default function Chat() {
       setMessages((prev) => [...prev, { role: "assistant", content: String((err as Error).message) }]);
     } finally {
       // Attempt to sync plan doc from the final assistant message
-      try { maybeUpdateDocFromAssistant(assistantContentOpenAI); } catch (_) {}
+      try { maybeUpdateDocFromAssistant(assistantContentOpenAI); } catch { /* no-op if parsing fails */ }
       setIsBusy(false);
       setStatus("Ready");
     }
@@ -235,6 +246,21 @@ export default function Chat() {
         {/* Left column: Chat column */}
         <div className="min-h-0 flex flex-col">
           <div className="flex-1 overflow-y-auto space-y-3 pr-1 lg:pr-2">
+            {messages.length === 0 && (
+              <div className="text-center text-slate-400 mt-8">
+                <h2 className="text-lg font-semibold text-slate-300 mb-2">Welcome to your Nutritionist Assistant!</h2>
+                <p className="mb-4">I can help you with:</p>
+                <ul className="text-sm space-y-1 text-left max-w-md mx-auto">
+                  <li>• Nutrition advice and food recommendations</li>
+                  <li>• Macro calculations and meal planning</li>
+                  <li>• Food substitutions based on your preferences</li>
+                  <li>• Answering questions about specific foods</li>
+                </ul>
+                <p className="text-xs mt-4 text-slate-500">
+                  Note: This is educational guidance only, not medical advice. Please consult healthcare professionals for medical concerns.
+                </p>
+              </div>
+            )}
             {messages.map((m, i) => (
               <div key={i} className="flex items-start gap-2">
                 <div
@@ -243,10 +269,24 @@ export default function Chat() {
                   {m.role === "user" ? "U" : "A"}
                 </div>
                 <div className="bg-slate-900/70 border border-white/10 rounded-lg p-2.5 whitespace-pre-wrap max-w-[80%]">
-                  {m.content}
+                  {m.content || (m.role === "assistant" && isBusy ? "..." : "")}
                 </div>
               </div>
             ))}
+            {isBusy && (
+              <div className="flex items-center gap-2 text-slate-400">
+                <div className="w-7 h-7 rounded-full grid place-items-center text-sm border bg-violet-500/20 text-violet-300 border-violet-500/30">
+                  A
+                </div>
+                <div className="bg-slate-900/70 border border-white/10 rounded-lg p-2.5">
+                  <div className="flex items-center gap-1">
+                    <div className="w-2 h-2 bg-violet-400 rounded-full animate-pulse"></div>
+                    <div className="w-2 h-2 bg-violet-400 rounded-full animate-pulse" style={{animationDelay: '0.2s'}}></div>
+                    <div className="w-2 h-2 bg-violet-400 rounded-full animate-pulse" style={{animationDelay: '0.4s'}}></div>
+                  </div>
+                </div>
+              </div>
+            )}
             <div ref={bottomRef} />
           </div>
 
@@ -293,15 +333,18 @@ export default function Chat() {
               aria-label="Message"
             />
             <button
-              className="px-4 py-2 rounded bg-gradient-to-r from-cyan-400 to-violet-400 text-slate-900 font-semibold disabled:opacity-50"
+              className="px-4 py-2 rounded bg-gradient-to-r from-cyan-400 to-violet-400 text-slate-900 font-semibold disabled:opacity-50 transition-opacity"
               onClick={handleSend}
-              disabled={isBusy}
+              disabled={isBusy || !input.trim()}
               aria-busy={isBusy}
+              title={!input.trim() ? "Enter a message to send" : "Send message"}
             >
-              Send
+              {isBusy ? "..." : "Send"}
             </button>
           </div>
-          <div className="text-slate-400 text-sm" aria-live="polite">{status}</div>
+          <div className="text-slate-400 text-sm" aria-live="polite">
+            {status} {sessionId && <span className="opacity-60">• Session: {sessionId.slice(-8)}</span>}
+          </div>
           </div>
         </div>
         {/* Right column: Plan doc editor */}
