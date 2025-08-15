@@ -30,6 +30,21 @@ export interface FoodItem {
    * grams per milliliter for liquids/semi-solids; if unknown, require mass-based inputs.
    */
   densityGPerMl?: number;
+  /**
+   * Optional metadata for tracking data sources and additional information
+   */
+  metadata?: {
+    source: 'local' | 'open_food_facts' | 'usda_fdc' | 'user_contributed';
+    barcode?: string;
+    brand?: string;
+    lastUpdated?: Date;
+    imageUrl?: string;
+    nutritionImageUrl?: string;
+    categories?: string[];
+    countries?: string[];
+    userNotes?: string;
+    confidence?: number; // 0-1 score for data quality
+  };
 }
 
 export interface MealItemInput {

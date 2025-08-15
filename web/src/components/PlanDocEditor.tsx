@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { usePlan, usePlanDoc, DEFAULT_MEALS, type MealKey } from "@/lib/nutrition/planContext";
 import { MacroEngine } from "@/lib/nutrition/macroEngine";
 import { FOODS_FIXTURE, PIECE_MAP } from "@/lib/nutrition/fixtures";
+import type { AggregatedMacros } from "@/lib/nutrition/types";
 
 // Very simple parser: lines under a meal header like `Breakfast:` with `- <foodId> <qty> <unit>`
 function parseDoc(doc: string): Record<MealKey, { foodId: string; quantity: number; unit: string }[]> {
@@ -29,11 +30,34 @@ function parseDoc(doc: string): Record<MealKey, { foodId: string; quantity: numb
 export default function PlanDocEditor() {
   const { plan } = usePlan();
   const { doc, setDoc } = usePlanDoc();
+  const [macros, setMacros] = useState<{ total: AggregatedMacros; perMeal: AggregatedMacros[] }>({
+    total: { caloriesKcal: 0, proteinG: 0, carbsG: 0, fatG: 0, fiberG: 0, sugarG: 0 },
+    perMeal: []
+  });
+  
   const engine = useMemo(() => new MacroEngine(FOODS_FIXTURE, { pieceToGramMap: PIECE_MAP }), []);
 
   const parsed = useMemo(() => parseDoc(doc), [doc]);
   const mealsArray = useMemo(() => DEFAULT_MEALS.map((m) => parsed[m].map((it) => ({ foodId: it.foodId, portion: { quantity: it.quantity, unit: it.unit } }))), [parsed]);
-  const macros = useMemo(() => engine.computeDayMacros(mealsArray), [engine, mealsArray]);
+  
+  // Compute macros asynchronously
+  useEffect(() => {
+    const computeMacros = async () => {
+      try {
+        const computedMacros = await engine.computeDayMacros(mealsArray);
+        setMacros(computedMacros);
+      } catch (error) {
+        console.error('Error computing macros:', error);
+        // Set default values on error
+        setMacros({
+          total: { caloriesKcal: 0, proteinG: 0, carbsG: 0, fatG: 0, fiberG: 0, sugarG: 0 },
+          perMeal: []
+        });
+      }
+    };
+    
+    computeMacros();
+  }, [engine, mealsArray]);
 
   useEffect(() => {
     // Sync if provider state changes later (future enhancement)

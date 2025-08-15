@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, Suspense } from "react";
 import { WebLLMClient } from "@/lib/llm/webllmClient";
 import dynamic from "next/dynamic";
 import type { ChatMessage, Preferences } from "@/lib/llm/types";
@@ -9,8 +9,25 @@ import type { MealItemInput } from "@/lib/nutrition/types";
 
 type Provider = "webllm" | "openai";
 
-const PlanPanel = dynamic(() => import("./PlanPanel"), { ssr: false });
-const PlanDocEditor = dynamic(() => import("./PlanDocEditor"), { ssr: false });
+// Fix dynamic imports with proper loading and error handling
+const PlanPanel = dynamic(() => import("./PlanPanel"), { 
+  ssr: false,
+  loading: () => <div className="p-4 text-slate-400">Loading plan panel...</div>
+});
+
+const PlanDocEditor = dynamic(() => import("./PlanDocEditor"), { 
+  ssr: false,
+  loading: () => <div className="p-4 text-slate-400">Loading editor...</div>
+});
+
+// Loading fallback component
+function LoadingFallback() {
+  return (
+    <div className="flex items-center justify-center h-32">
+      <div className="text-slate-400">Loading components...</div>
+    </div>
+  );
+}
 
 export default function Chat() {
   const { addItem } = usePlan();
@@ -29,7 +46,7 @@ export default function Chat() {
 
   const client = useMemo(() => new WebLLMClient(modelId), [modelId]);
   const bottomRef = useRef<HTMLDivElement | null>(null);
-  const { doc } = usePlanDoc();
+  const { doc, setDoc } = usePlanDoc();
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -52,6 +69,35 @@ export default function Chat() {
       item: { foodId: food, portion: { quantity: Number(qty), unit } as any },
     };
   };
+
+  function extractPlanDocFromText(text: string): string | null {
+    // 1) Prefer fenced code blocks that contain a meal plan
+    const codeBlockRegex = /```[a-zA-Z0-9_-]*\n([\s\S]*?)```/g;
+    let match: RegExpExecArray | null;
+    while ((match = codeBlockRegex.exec(text)) !== null) {
+      const block = (match[1] || "").trim();
+      if (/Meal Plan/i.test(block) || /^(Breakfast:|Lunch:|Dinner:|Snacks:)/m.test(block)) {
+        return block;
+      }
+    }
+
+    // 2) Fallback: capture from "Meal Plan" header to the end if present
+    const headerIdx = text.search(/Meal Plan/i);
+    if (headerIdx !== -1) {
+      const candidate = text.slice(headerIdx).trim();
+      if (/Breakfast:/.test(candidate) || /Lunch:/.test(candidate) || /Dinner:/.test(candidate) || /Snacks:/.test(candidate)) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
+  function maybeUpdateDocFromAssistant(assistantText: string) {
+    const extracted = extractPlanDocFromText(assistantText);
+    if (!extracted) return;
+    if (extracted.trim() === doc.trim()) return;
+    setDoc(extracted);
+  }
 
   const handleSend = async () => {
     const text = input.trim();
@@ -87,6 +133,12 @@ export default function Chat() {
       } catch (err) {
         setMessages((prev) => [...prev, { role: "assistant", content: String((err as Error).message) }]);
       } finally {
+        // Attempt to sync plan doc from the final assistant message
+        try {
+          maybeUpdateDocFromAssistant(assistantContent);
+        } catch (_) {
+          // no-op if parsing fails
+        }
         setIsBusy(false);
         setStatus("Ready");
       }
@@ -94,6 +146,7 @@ export default function Chat() {
     }
 
     // openai via server API (SSE)
+    let assistantContentOpenAI = "";
     try {
       const resp = await fetch(`/api/chat?provider=openai`, {
         method: "POST",
@@ -103,7 +156,7 @@ export default function Chat() {
       if (!resp.ok || !resp.body) throw new Error(`Request failed: ${resp.status}`);
       const reader = resp.body.getReader();
       const decoder = new TextDecoder();
-      let assistantContent = "";
+      assistantContentOpenAI = "";
       setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
       while (true) {
         const { done, value } = await reader.read();
@@ -115,10 +168,10 @@ export default function Chat() {
           const dataIdx = line.indexOf("data:");
           if (dataIdx !== -1) {
             const data = line.slice(dataIdx + 5).trim();
-            assistantContent += data;
+            assistantContentOpenAI += data;
             setMessages((prev) => {
               const copy = [...prev];
-              copy[copy.length - 1] = { role: "assistant", content: assistantContent };
+              copy[copy.length - 1] = { role: "assistant", content: assistantContentOpenAI };
               return copy;
             });
           }
@@ -127,6 +180,8 @@ export default function Chat() {
     } catch (err) {
       setMessages((prev) => [...prev, { role: "assistant", content: String((err as Error).message) }]);
     } finally {
+      // Attempt to sync plan doc from the final assistant message
+      try { maybeUpdateDocFromAssistant(assistantContentOpenAI); } catch (_) {}
       setIsBusy(false);
       setStatus("Ready");
     }
@@ -251,7 +306,9 @@ export default function Chat() {
         </div>
         {/* Right column: Plan doc editor */}
         <div className="hidden lg:flex h-full min-h-0">
-          <PlanDocEditor />
+          <Suspense fallback={<LoadingFallback />}>
+            <PlanDocEditor />
+          </Suspense>
         </div>
       </main>
       <footer className="border-t border-white/10 px-4 py-2 text-center text-slate-400">Educational nutrition guidance only, not medical advice.</footer>
