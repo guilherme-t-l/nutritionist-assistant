@@ -19,7 +19,7 @@ const STORAGE_KEYS = {
 } as const;
 
 // Save data to localStorage with error handling
-const saveToStorage = (key: string, data: any) => {
+const saveToStorage = (key: string, data: unknown) => {
   try {
     localStorage.setItem(key, JSON.stringify(data));
   } catch (error) {
@@ -28,7 +28,7 @@ const saveToStorage = (key: string, data: any) => {
 };
 
 // Load data from localStorage with error handling
-const loadFromStorage = <T>(key: string, defaultValue: T): T => {
+const loadFromStorage = <T,>(key: string, defaultValue: T): T => {
   try {
     const stored = localStorage.getItem(key);
     return stored ? JSON.parse(stored) : defaultValue;
@@ -139,7 +139,7 @@ export default function Chat() {
     };
     return {
       meal: mealMap[mealStr.toLowerCase()],
-      item: { foodId: food, portion: { quantity: Number(qty), unit } as any },
+      item: { foodId: food, portion: { quantity: Number(qty), unit: unit as "g" | "ml" | "piece" } },
     };
   };
 
