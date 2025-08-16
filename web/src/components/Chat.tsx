@@ -66,7 +66,7 @@ export default function Chat() {
     };
     return {
       meal: mealMap[mealStr.toLowerCase()],
-      item: { foodId: food, portion: { quantity: Number(qty), unit } as any },
+      item: { foodId: food, portion: { quantity: Number(qty), unit } },
     };
   };
 
@@ -119,10 +119,31 @@ export default function Chat() {
     setStatus("Thinking…");
 
     if (provider === "webllm") {
+      const startTime = Date.now();
       let assistantContent = "";
+      let firstTokenTime: number | null = null;
+      
+      // Client-side metrics for WebLLM
+      const clientMetrics = {
+        timestamp: new Date().toISOString(),
+        provider: "webllm",
+        modelId,
+        messageCount: nextMessages.length,
+        startTime,
+        success: false,
+        error: undefined as string | undefined,
+        firstTokenLatency: undefined as number | undefined,
+        totalDuration: undefined as number | undefined,
+        responseLength: 0
+      };
+
       setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
       try {
         for await (const delta of client.generateStream({ messages: nextMessages, preferences, planDoc: doc })) {
+          if (firstTokenTime === null) {
+            firstTokenTime = Date.now();
+            clientMetrics.firstTokenLatency = firstTokenTime - startTime;
+          }
           assistantContent += delta;
           setMessages((prev) => {
             const copy = [...prev];
@@ -130,9 +151,16 @@ export default function Chat() {
             return copy;
           });
         }
+        clientMetrics.success = true;
+        clientMetrics.responseLength = assistantContent.length;
       } catch (err) {
+        clientMetrics.error = String((err as Error).message);
         setMessages((prev) => [...prev, { role: "assistant", content: String((err as Error).message) }]);
       } finally {
+        // Log client metrics
+        clientMetrics.totalDuration = Date.now() - startTime;
+        console.log('[CLIENT_METRICS]', JSON.stringify(clientMetrics));
+        
         // Attempt to sync plan doc from the final assistant message
         try {
           maybeUpdateDocFromAssistant(assistantContent);
@@ -146,7 +174,23 @@ export default function Chat() {
     }
 
     // openai via server API (SSE)
+    const openaiStartTime = Date.now();
     let assistantContentOpenAI = "";
+    let openaiFirstTokenTime: number | null = null;
+    
+    // Client-side metrics for OpenAI
+    const openaiMetrics = {
+      timestamp: new Date().toISOString(),
+      provider: "openai",
+      messageCount: nextMessages.length,
+      startTime: openaiStartTime,
+      success: false,
+      error: undefined as string | undefined,
+      firstTokenLatency: undefined as number | undefined,
+      totalDuration: undefined as number | undefined,
+      responseLength: 0
+    };
+    
     try {
       const resp = await fetch(`/api/chat?provider=openai`, {
         method: "POST",
@@ -168,6 +212,10 @@ export default function Chat() {
           const dataIdx = line.indexOf("data:");
           if (dataIdx !== -1) {
             const data = line.slice(dataIdx + 5).trim();
+            if (data && openaiFirstTokenTime === null) {
+              openaiFirstTokenTime = Date.now();
+              openaiMetrics.firstTokenLatency = openaiFirstTokenTime - openaiStartTime;
+            }
             assistantContentOpenAI += data;
             setMessages((prev) => {
               const copy = [...prev];
@@ -177,9 +225,16 @@ export default function Chat() {
           }
         }
       }
+      openaiMetrics.success = true;
+      openaiMetrics.responseLength = assistantContentOpenAI.length;
     } catch (err) {
+      openaiMetrics.error = String((err as Error).message);
       setMessages((prev) => [...prev, { role: "assistant", content: String((err as Error).message) }]);
     } finally {
+      // Log client metrics
+      openaiMetrics.totalDuration = Date.now() - openaiStartTime;
+      console.log('[CLIENT_METRICS]', JSON.stringify(openaiMetrics));
+      
       // Attempt to sync plan doc from the final assistant message
       try { maybeUpdateDocFromAssistant(assistantContentOpenAI); } catch (_) {}
       setIsBusy(false);
