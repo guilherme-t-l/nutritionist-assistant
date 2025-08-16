@@ -45,6 +45,8 @@ An AI-powered nutritionist assistant that provides conversational guidance on nu
    OPENAI_API_KEY=your_openai_api_key_here
    OPENAI_MODEL=gpt-4o-mini
    ```
+   
+   **📋 For detailed setup instructions, see [OPENAI_SETUP_GUIDE.md](./OPENAI_SETUP_GUIDE.md)**
 
 4. **Start the development server:**
    ```bash
