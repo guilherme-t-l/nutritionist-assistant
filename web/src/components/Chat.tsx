@@ -56,7 +56,7 @@ function LoadingFallback() {
 export default function Chat() {
   const { addItem } = usePlan();
   const [provider, setProvider] = useState<Provider>("webllm");
-  const [modelId, setModelId] = useState<string>("Llama-3.2-1B-Instruct-q4f32_1-MLC");
+  const [modelId, setModelId] = useState<string>("Qwen2.5-7B-Instruct-q4f32_1-MLC");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [isBusy, setIsBusy] = useState(false);
@@ -69,7 +69,9 @@ export default function Chat() {
     budget: undefined,
   });
 
-  const client = useMemo(() => new WebLLMClient(modelId), [modelId]);
+  const client = useMemo(() => new WebLLMClient(modelId, (progress: string) => {
+    setStatus(progress);
+  }), [modelId]);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const { doc, setDoc } = usePlanDoc();
 
@@ -390,10 +392,32 @@ export default function Chat() {
                 onChange={(e) => setModelId(e.target.value)}
                 aria-label="Local model"
               >
-                <option value="Llama-3.2-1B-Instruct-q4f32_1-MLC">Llama 3.2 1B Instruct</option>
-                <option value="Phi-3-mini-4k-instruct-q4f16_1-MLC">Phi-3 Mini 4K Instruct</option>
-                <option value="Qwen2-1.5B-Instruct-q4f16_1-MLC">Qwen2 1.5B Instruct</option>
+                {/* Recommended Models */}
+                <option value="Qwen2.5-7B-Instruct-q4f32_1-MLC">🌟 Qwen2.5 7B Instruct (Recommended)</option>
+                <option value="Llama-3.2-8B-Instruct-q4f32_1-MLC">🦙 Llama 3.2 8B Instruct</option>
+                <option value="Llama-3.3-70B-Instruct-q4f32_1-MLC">🚀 Llama 3.3 70B Instruct (Large - ~40GB)</option>
+                
+                {/* Legacy/Lightweight Models */}
+                <optgroup label="Lightweight Models">
+                  <option value="Llama-3.2-1B-Instruct-q4f32_1-MLC">Llama 3.2 1B Instruct (Fast)</option>
+                  <option value="Phi-3-mini-4k-instruct-q4f16_1-MLC">Phi-3 Mini 4K Instruct</option>
+                  <option value="Qwen2-1.5B-Instruct-q4f16_1-MLC">Qwen2 1.5B Instruct</option>
+                </optgroup>
               </select>
+            )}
+            
+            {/* Performance warning for large models */}
+            {provider === "webllm" && modelId.includes("70B") && (
+              <div className="mt-2 p-2 bg-amber-900/20 border border-amber-500/30 rounded text-amber-200 text-xs">
+                ⚠️ <strong>Large Model Selected:</strong> Initial download is ~40GB and may take 10+ minutes. 
+                Consider using a smaller model for faster response times.
+              </div>
+            )}
+            
+            {provider === "webllm" && (modelId.includes("7B") || modelId.includes("8B")) && !modelId.includes("70B") && (
+              <div className="mt-2 p-2 bg-green-900/20 border border-green-500/30 rounded text-green-200 text-xs">
+                ✅ <strong>Optimized Model:</strong> Good balance of performance and speed (~3-4GB download).
+              </div>
             )}
           </div>
         </div>
