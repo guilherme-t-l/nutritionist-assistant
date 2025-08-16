@@ -355,6 +355,24 @@ export class HybridFoodService {
   }
 
   /**
+   * Get all available foods from enabled sources
+   */
+  async getAllFoods(): Promise<FoodItem[]> {
+    const allFoods: FoodItem[] = [];
+
+    // Add local database foods
+    if (this.options.enableLocalDatabase) {
+      allFoods.push(...FOOD_DATABASE);
+    }
+
+    // Note: We don't fetch all foods from external APIs as this would be too expensive
+    // External sources are primarily used for search and barcode lookup
+    // For substitutions, we primarily rely on the curated local database
+
+    return allFoods;
+  }
+
+  /**
    * Clear cache
    */
   clearCache(): void {

@@ -52,5 +52,86 @@ export interface MealItemInput {
   portion: FoodPortion;
 }
 
-export interface AggregatedMacros extends MacroProfile {}
+// ===== SUBSTITUTION ENGINE TYPES =====
+
+export interface UserPreferences {
+  allergies?: string[];
+  dislikes?: string[];
+  cuisine?: string[];
+  budget?: 'low' | 'medium' | 'high';
+  dietaryRestrictions?: ('vegetarian' | 'vegan' | 'gluten-free' | 'dairy-free' | 'keto' | 'paleo')[];
+}
+
+export interface SubstitutionConstraints {
+  /** Maximum allowed macro deviation percentage (default: 5%) */
+  macroTolerancePercent?: number;
+  /** Maximum number of suggestions to return */
+  maxSuggestions?: number;
+  /** Minimum confidence score for data quality */
+  minConfidence?: number;
+  /** User preferences and restrictions */
+  preferences?: UserPreferences;
+  /** Whether to include foods from external APIs */
+  includeExternalSources?: boolean;
+}
+
+export interface MacroDistance {
+  caloriesPercent: number;
+  proteinPercent: number;
+  carbsPercent: number;
+  fatPercent: number;
+  fiberPercent?: number;
+  sugarPercent?: number;
+  /** Overall macro distance score (0-100, lower is better) */
+  overallScore: number;
+}
+
+export interface SubstitutionScore {
+  /** Macro similarity score (0-100, higher is better) */
+  macroScore: number;
+  /** Preference alignment score (0-100, higher is better) */
+  preferenceScore: number;
+  /** Data quality/availability score (0-100, higher is better) */
+  availabilityScore: number;
+  /** Cost efficiency score (0-100, higher is better) */
+  costScore: number;
+  /** Overall weighted score (0-100, higher is better) */
+  totalScore: number;
+  /** Detailed macro distance breakdown */
+  macroDistance: MacroDistance;
+}
+
+export interface SubstitutionCandidate {
+  /** The suggested replacement food */
+  food: FoodItem;
+  /** Adjusted portion to match target macros as closely as possible */
+  suggestedPortion: FoodPortion;
+  /** Detailed scoring breakdown */
+  score: SubstitutionScore;
+  /** Computed macros for the suggested portion */
+  macros: MacroProfile;
+  /** Reason why this substitution is suitable */
+  reason: string;
+}
+
+export interface SubstitutionResult {
+  /** The original food item being replaced */
+  originalFood: FoodItem;
+  /** Original portion */
+  originalPortion: FoodPortion;
+  /** Original macros */
+  originalMacros: MacroProfile;
+  /** List of substitution candidates, sorted by score */
+  candidates: SubstitutionCandidate[];
+  /** Whether any viable substitutions were found */
+  hasViableSubstitutions: boolean;
+  /** Processing metadata */
+  metadata: {
+    totalCandidatesEvaluated: number;
+    processingTimeMs: number;
+    constraintsApplied: SubstitutionConstraints;
+  };
+}
+
+export type AggregatedMacros = MacroProfile;
 
