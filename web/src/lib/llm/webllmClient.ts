@@ -3,6 +3,7 @@
 import { CreateMLCEngine, MLCEngineInterface, ChatCompletionChunk } from "@mlc-ai/web-llm";
 import type { GenerateOptions, LLMClient } from "./types";
 import { BaseMessage, buildMessagesWithContext } from "./systemPrompt";
+import { sessionManager } from "./sessionManager";
 
 export class WebLLMClient implements LLMClient {
   private engine: MLCEngineInterface | null = null;
@@ -21,11 +22,23 @@ export class WebLLMClient implements LLMClient {
     await this.ensureEngine();
     if (!this.engine) throw new Error("WebLLM engine not initialized");
 
-    const { messages, preferences, planDoc, temperature = 0.7, maxTokens = 512 } = options;
-    const filtered: BaseMessage[] = messages
-      .filter((m) => m.role !== "system")
-      .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
-    const mlcMessages = buildMessagesWithContext(filtered, preferences, planDoc);
+    const { messages, preferences, planDoc, temperature = 0.4, maxTokens = 2000, sessionId } = options;
+    
+    // Get conversation summary if session exists (WebLLM runs client-side, so session might not be available)
+    let conversationSummary: string | undefined;
+    if (sessionId && typeof window !== "undefined") {
+      // For client-side session management, we'd need a different approach
+      // For now, we'll skip the summary for WebLLM
+      conversationSummary = undefined;
+    }
+    
+    // Convert messages to base format for context building
+    const baseMessages: BaseMessage[] = messages.map((m) => ({ 
+      role: m.role as "user" | "assistant" | "system", 
+      content: m.content 
+    }));
+    
+    const mlcMessages = buildMessagesWithContext(baseMessages, preferences, planDoc, conversationSummary);
 
     const stream = await this.engine.chat.completions.create({
       // web-llm types are permissive; messages match its expected shape
@@ -33,6 +46,7 @@ export class WebLLMClient implements LLMClient {
       stream: true,
       temperature,
       max_tokens: maxTokens,
+      top_p: 0.9, // Add top_p for better response quality
     });
 
     for await (const chunk of stream as AsyncIterable<ChatCompletionChunk>) {
