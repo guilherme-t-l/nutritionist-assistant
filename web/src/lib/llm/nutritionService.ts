@@ -1,7 +1,15 @@
 import { HybridFoodService } from "../nutrition/hybridFoodService";
 import { MacroEngine } from "../nutrition/macroEngine";
+import { SubstitutionEngine, type LLMEnhancedSubstitutionOptions } from "../nutrition/substitutionEngine";
 import { FOOD_DATABASE } from "../nutrition/foodDatabase";
-import type { FoodItem, MealItemInput, AggregatedMacros } from "../nutrition/types";
+import type { 
+  FoodItem, 
+  MealItemInput, 
+  AggregatedMacros, 
+  SubstitutionConstraints, 
+  SubstitutionResult,
+  FoodPortion
+} from "../nutrition/types";
 
 export interface NutritionQueryResult {
   success: boolean;
@@ -28,6 +36,7 @@ export interface MacroCalculationResult {
 export class AgentNutritionService {
   private hybridService: HybridFoodService;
   private macroEngine: MacroEngine;
+  private substitutionEngine: SubstitutionEngine;
 
   constructor() {
     this.hybridService = new HybridFoodService({
@@ -50,6 +59,8 @@ export class AgentNutritionService {
         "white_bread": 25, // 1 slice
       },
     });
+
+    this.substitutionEngine = new SubstitutionEngine();
   }
 
   /**
@@ -397,6 +408,81 @@ export class AgentNutritionService {
     const diff3 = Math.abs(macros1.fatG - macros2.fatG) / Math.max(macros1.fatG, macros2.fatG, 1);
     
     return 1 - (diff1 + diff2 + diff3) / 3;
+  }
+
+  /**
+   * Find food substitutions with macro tolerance
+   */
+  async findSubstitutions(
+    foodId: string,
+    portion: FoodPortion,
+    constraints?: SubstitutionConstraints,
+    llmOptions?: LLMEnhancedSubstitutionOptions
+  ): Promise<NutritionQueryResult> {
+    try {
+      const result = await this.substitutionEngine.findSubstitutions(
+        foodId,
+        portion,
+        constraints,
+        llmOptions
+      );
+
+      return {
+        success: true,
+        data: result,
+        source: 'substitution_engine',
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: `Failed to find substitutions: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      };
+    }
+  }
+
+  /**
+   * Find substitutions with user context for better LLM-enhanced ranking
+   */
+  async findSmartSubstitutions(
+    foodId: string,
+    portion: FoodPortion,
+    options: {
+      constraints?: SubstitutionConstraints;
+      mealContext?: string;
+      userContext?: string;
+      enableLLMRanking?: boolean;
+    } = {}
+  ): Promise<NutritionQueryResult> {
+    try {
+      const { constraints, mealContext, userContext, enableLLMRanking = true } = options;
+
+      const llmOptions: LLMEnhancedSubstitutionOptions = {
+        enableLLMRanking,
+        mealContext,
+        userContext,
+      };
+
+      const result = await this.substitutionEngine.findSubstitutions(
+        foodId,
+        portion,
+        constraints,
+        llmOptions
+      );
+
+      return {
+        success: true,
+        data: {
+          ...result,
+          enhancedWithAI: enableLLMRanking,
+        },
+        source: 'smart_substitution_engine',
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: `Failed to find smart substitutions: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      };
+    }
   }
 
   /**
