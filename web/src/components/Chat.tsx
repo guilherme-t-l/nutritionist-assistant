@@ -170,7 +170,23 @@ export default function Chat() {
     }
 
     // openai via server API (SSE)
+    const openaiStartTime = Date.now();
     let assistantContentOpenAI = "";
+    let openaiFirstTokenTime: number | null = null;
+    
+    // Client-side metrics for OpenAI
+    const openaiMetrics = {
+      timestamp: new Date().toISOString(),
+      provider: "openai",
+      messageCount: nextMessages.length,
+      startTime: openaiStartTime,
+      success: false,
+      error: undefined as string | undefined,
+      firstTokenLatency: undefined as number | undefined,
+      totalDuration: undefined as number | undefined,
+      responseLength: 0
+    };
+    
     try {
       const resp = await fetch(`/api/chat?provider=openai`, {
         method: "POST",
@@ -207,6 +223,10 @@ export default function Chat() {
           const dataIdx = line.indexOf("data:");
           if (dataIdx !== -1) {
             const data = line.slice(dataIdx + 5).trim();
+            if (data && openaiFirstTokenTime === null) {
+              openaiFirstTokenTime = Date.now();
+              openaiMetrics.firstTokenLatency = openaiFirstTokenTime - openaiStartTime;
+            }
             assistantContentOpenAI += data;
             setMessages((prev) => {
               const copy = [...prev];
@@ -216,9 +236,16 @@ export default function Chat() {
           }
         }
       }
+      openaiMetrics.success = true;
+      openaiMetrics.responseLength = assistantContentOpenAI.length;
     } catch (err) {
+      openaiMetrics.error = String((err as Error).message);
       setMessages((prev) => [...prev, { role: "assistant", content: String((err as Error).message) }]);
     } finally {
+      // Log client metrics
+      openaiMetrics.totalDuration = Date.now() - openaiStartTime;
+      console.log('[CLIENT_METRICS]', JSON.stringify(openaiMetrics));
+      
       // Attempt to sync plan doc from the final assistant message
       try { maybeUpdateDocFromAssistant(assistantContentOpenAI); } catch { /* no-op if parsing fails */ }
       setIsBusy(false);
