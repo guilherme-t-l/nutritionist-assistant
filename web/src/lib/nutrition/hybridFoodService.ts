@@ -16,9 +16,9 @@ export interface FoodServiceOptions {
   enableLocalDatabase?: boolean;
   enableUsdaFdc?: boolean;
   enableUserContributions?: boolean;
+  usdaApiKey?: string;
   maxResults?: number;
   cacheResults?: boolean;
-  usdaApiKey?: string;
 }
 
 export class HybridFoodService {
@@ -31,19 +31,19 @@ export class HybridFoodService {
   constructor(options: FoodServiceOptions = {}) {
     this.openFoodFactsClient = new OpenFoodFactsClient();
     
-    // Initialize USDA FDC client if API key is provided
-    if (options.usdaApiKey) {
+    // Initialize USDA FDC client if enabled and API key is provided
+    if (options.enableUsdaFdc && options.usdaApiKey) {
       this.usdaFdcClient = new UsdaFdcClient(options.usdaApiKey);
     }
     
     this.options = {
       enableOpenFoodFacts: true,
       enableLocalDatabase: true,
-      enableUsdaFdc: !!options.usdaApiKey,
+      enableUsdaFdc: !!(options.enableUsdaFdc && options.usdaApiKey),
       enableUserContributions: true,
+      usdaApiKey: options.usdaApiKey || '',
       maxResults: 50,
       cacheResults: true,
-      usdaApiKey: '',
       ...options,
     };
   }
@@ -87,23 +87,29 @@ export class HybridFoodService {
         }
       }
 
-      // 2. Try USDA FDC if available and we need more results
+      // 2. Try USDA FDC if enabled and we need more results
       if (this.options.enableUsdaFdc && this.usdaFdcClient && results.length < this.options.maxResults) {
         try {
-          const remainingSlots = this.options.maxResults - results.length;
-          const usdaResults = await this.usdaFdcClient.search(query, remainingSlots);
+          const remainingSlots = Math.max(5, this.options.maxResults - results.length);
+          const usdaResults = await this.usdaFdcClient.search(query, Math.min(remainingSlots, 10));
           
-          for (const usdaResult of usdaResults) {
-            try {
-              const fdcFood = await this.usdaFdcClient.getFood(usdaResult.fdcId);
-              const convertedFood = this.usdaFdcClient.convertToFoodItem(fdcFood);
-              results.push(convertedFood);
-            } catch (error) {
-              console.warn(`Failed to fetch USDA food ${usdaResult.fdcId}:`, error);
-            }
-          }
+          // Convert search results to full food details (limit to 5 for performance)
+          const detailedResults = await Promise.all(
+            usdaResults.slice(0, 5).map(async (searchResult) => {
+              try {
+                const foodDetail = await this.usdaFdcClient!.getFood(searchResult.fdcId);
+                return this.usdaFdcClient!.convertToFoodItem(foodDetail);
+              } catch (error) {
+                console.warn(`Failed to get USDA food details for ${searchResult.fdcId}:`, error);
+                return null;
+              }
+            })
+          );
           
-          if (results.length > 0) {
+          const validResults = detailedResults.filter(result => result !== null) as FoodItem[];
+          results.push(...validResults);
+          
+          if (validResults.length > 0) {
             source = source === 'open_food_facts' ? 'hybrid' : 'usda_fdc';
           }
         } catch (error) {
@@ -204,12 +210,12 @@ export class HybridFoodService {
     }
 
     // Check if it's a USDA FDC ID
-    if (id.startsWith('usda_') && this.usdaFdcClient) {
+    if (id.startsWith('usda_') && this.options.enableUsdaFdc && this.usdaFdcClient) {
       try {
         const fdcId = parseInt(id.replace('usda_', ''));
-        const fdcFood = await this.usdaFdcClient.getFood(fdcId);
-        if (fdcFood) {
-          return this.usdaFdcClient.convertToFoodItem(fdcFood);
+        if (!isNaN(fdcId)) {
+          const foodDetail = await this.usdaFdcClient.getFood(fdcId);
+          return this.usdaFdcClient.convertToFoodItem(foodDetail);
         }
       } catch (error) {
         console.warn('Failed to fetch USDA FDC food:', error);
