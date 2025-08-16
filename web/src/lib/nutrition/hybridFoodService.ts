@@ -328,10 +328,10 @@ export class HybridFoodService {
   /**
    * Cache management
    */
-  private getFromCache(key: string): FoodItem[] | null {
+  private getFromCache(key: string): { data: FoodItem[]; timestamp: number } | null {
     const cached = this.cache.get(key);
     if (cached && Date.now() - cached.timestamp < this.cacheExpiryMs) {
-      return cached.data;
+      return cached;
     }
     this.cache.delete(key);
     return null;
