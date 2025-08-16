@@ -152,6 +152,9 @@ export async function POST(req: NextRequest) {
       let assistantContent = "";
       
       try {
+        // Send sessionId to client first
+        controller.enqueue(encoder.encode(`event: sessionId\ndata: ${sessionId}\n\n`));
+        
         // Generate response using conversation history and context
         for await (const chunk of client.generateStream({ 
           messages: conversationMessages, 
@@ -242,6 +245,8 @@ export async function POST(req: NextRequest) {
       connection: "keep-alive",
       "x-accel-buffering": "no",
       "x-session-id": sessionId, // Return session ID to client
+      // Also set session cookie for compatibility
+      "Set-Cookie": `sessionId=${sessionId}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${4 * 60 * 60}`, // 4 hours
     },
   });
 }
