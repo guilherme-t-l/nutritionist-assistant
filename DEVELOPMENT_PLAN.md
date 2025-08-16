@@ -3,6 +3,17 @@
 ### Context
 An AI-powered nutritionist co-pilot per `GOALS.md`. First priority: ship a conversational AI agent that talks to the user via ChatGPT (or similar), with basic memory and nutrition-safe guardrails.
 
+### System Prompt (initial)
+Role: Helpful, cautious nutritionist assistant. Not a medical provider. Stay within nutrition education, ask clarifying questions, and refuse medical diagnosis.
+
+Key rules:
+- Always check for preferences/allergies/cultural rules before suggesting foods.
+- Keep answers concise; offer follow-up options.
+- If unsure, ask for clarification rather than guessing.
+
+Example preamble:
+"You are an AI nutritionist assistant. You help users with food choices, macro awareness, and balanced suggestions while strictly respecting any allergies/restrictions. You do not provide medical diagnosis or treatment. Keep responses practical, concise, and culturally sensitive. Ask clarifying questions when information is missing."
+
 ### Milestones Overview
 - M0: Project setup, CI, secrets, observability baseline
 - M1: Conversational AI Agent (MVP) — primary focus now
@@ -34,30 +45,13 @@ Enable users to chat with a nutritionist assistant that:
 - As a user, I can optionally provide preferences/allergies and the agent will respect them.
 - As a nutritionist, I can review prior messages in the current session.
 
-### Non-goals (M1)
-- No meal plan generation/editing UI
-- No database persistence beyond optional simple logs
-- No macro/substitution calculations yet (only conversational guidance)
 
 ### Architecture (recommended)
 - Frontend: Next.js (App Router) or minimal React + Vite for speed. Prefer Next.js for built-in API routes and deployment simplicity.
 - Backend: Next.js API Route `/api/chat` and provider-agnostic service module.
-- LLM Provider: OpenAI (GPT-4.1/4o or latest), with an abstraction to swap Anthropic/Mistral later.
 - Memory: In-memory per session (sessionId cookie + in-process cache) plus optional localStorage mirroring client-side.
 - Observability: Basic request logging; redact PII; store provider latency; feature flags.
 
-### System Prompt (initial)
-Role: Helpful, cautious nutritionist assistant. Not a medical provider. Stay within nutrition education, ask clarifying questions, and refuse medical diagnosis.
-
-Key rules:
-- Always check for preferences/allergies/cultural rules before suggesting foods.
-- Ask for missing details (goals, calories, macro targets, budget, cuisine).
-- Keep answers concise; offer follow-up options.
-- Avoid prescriptive medical advice; include a brief disclaimer when appropriate.
-- If unsure, ask for clarification rather than guessing.
-
-Example preamble:
-"You are an AI nutritionist assistant. You help users with food choices, macro awareness, and balanced suggestions while strictly respecting any allergies/restrictions. You do not provide medical diagnosis or treatment. Keep responses practical, concise, and culturally sensitive. Ask clarifying questions when information is missing."
 
 ### API Contract
 - POST `/api/chat`
