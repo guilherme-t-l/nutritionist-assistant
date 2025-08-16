@@ -3,19 +3,36 @@
 import { CreateMLCEngine, MLCEngineInterface, ChatCompletionChunk } from "@mlc-ai/web-llm";
 import type { GenerateOptions, LLMClient } from "./types";
 import { BaseMessage, buildMessagesWithContext } from "./systemPrompt";
-import { sessionManager } from "./sessionManager";
 
 export class WebLLMClient implements LLMClient {
   private engine: MLCEngineInterface | null = null;
   private modelId: string;
+  private onProgress?: (progress: string) => void;
 
-  constructor(modelId: string = "Llama-3.2-1B-Instruct-q4f32_1-MLC") {
+  constructor(modelId: string = "Llama-3.2-1B-Instruct-q4f32_1-MLC", onProgress?: (progress: string) => void) {
     this.modelId = modelId;
+    this.onProgress = onProgress;
   }
 
   private async ensureEngine(): Promise<void> {
     if (this.engine) return;
-    this.engine = await CreateMLCEngine(this.modelId, {});
+    
+    this.onProgress?.("Initializing model...");
+    
+    // Add progress callback for model loading
+    const initProgressCallback = (progress: { text?: string } | string) => {
+      if (typeof progress === 'object' && progress.text) {
+        this.onProgress?.(progress.text);
+      } else if (typeof progress === 'string') {
+        this.onProgress?.(progress);
+      }
+    };
+    
+    this.engine = await CreateMLCEngine(this.modelId, {
+      initProgressCallback,
+    });
+    
+    this.onProgress?.("Model ready!");
   }
 
   async *generateStream(options: GenerateOptions): AsyncIterable<string> {
