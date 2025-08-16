@@ -9,6 +9,35 @@ import type { MealItemInput } from "@/lib/nutrition/types";
 
 type Provider = "webllm" | "openai";
 
+// Session management utilities
+const generateSessionId = () => `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+const STORAGE_KEYS = {
+  SESSION_ID: 'nutritionist_session_id',
+  MESSAGES: 'nutritionist_messages',
+  PREFERENCES: 'nutritionist_preferences',
+} as const;
+
+// Save data to localStorage with error handling
+const saveToStorage = (key: string, data: any) => {
+  try {
+    localStorage.setItem(key, JSON.stringify(data));
+  } catch (error) {
+    console.warn('Failed to save to localStorage:', error);
+  }
+};
+
+// Load data from localStorage with error handling
+const loadFromStorage = <T>(key: string, defaultValue: T): T => {
+  try {
+    const stored = localStorage.getItem(key);
+    return stored ? JSON.parse(stored) : defaultValue;
+  } catch (error) {
+    console.warn('Failed to load from localStorage:', error);
+    return defaultValue;
+  }
+};
+
 // Fix dynamic imports with proper loading and error handling
 const PlanPanel = dynamic(() => import("./PlanPanel"), { 
   ssr: false,
@@ -37,6 +66,7 @@ export default function Chat() {
   const [input, setInput] = useState("");
   const [isBusy, setIsBusy] = useState(false);
   const [status, setStatus] = useState("Ready");
+  const [sessionId, setSessionId] = useState<string>("");
   const [preferences, setPreferences] = useState<Preferences>({
     allergies: [],
     dislikes: [],
@@ -47,6 +77,49 @@ export default function Chat() {
   const client = useMemo(() => new WebLLMClient(modelId), [modelId]);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const { doc, setDoc } = usePlanDoc();
+
+  // Initialize session and load persisted data
+  useEffect(() => {
+    let currentSessionId = loadFromStorage(STORAGE_KEYS.SESSION_ID, '');
+    
+    // Generate new session if none exists
+    if (!currentSessionId) {
+      currentSessionId = generateSessionId();
+      saveToStorage(STORAGE_KEYS.SESSION_ID, currentSessionId);
+    }
+    
+    setSessionId(currentSessionId);
+    
+    // Load persisted messages and preferences
+    const savedMessages = loadFromStorage<ChatMessage[]>(STORAGE_KEYS.MESSAGES, []);
+    const savedPreferences = loadFromStorage<Preferences>(STORAGE_KEYS.PREFERENCES, {
+      allergies: [],
+      dislikes: [],
+      cuisine: "",
+      budget: undefined,
+    });
+    
+    setMessages(savedMessages);
+    setPreferences(savedPreferences);
+    
+    console.log('Session loaded:', { 
+      sessionId: currentSessionId, 
+      messageCount: savedMessages.length,
+      preferences: savedPreferences 
+    });
+  }, []);
+
+  // Persist messages whenever they change
+  useEffect(() => {
+    if (messages.length > 0) {
+      saveToStorage(STORAGE_KEYS.MESSAGES, messages);
+    }
+  }, [messages]);
+
+  // Persist preferences whenever they change
+  useEffect(() => {
+    saveToStorage(STORAGE_KEYS.PREFERENCES, preferences);
+  }, [preferences]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -200,12 +273,42 @@ export default function Chat() {
       .map((s) => s.trim())
       .filter(Boolean);
 
+  const clearSession = () => {
+    // Clear localStorage
+    localStorage.removeItem(STORAGE_KEYS.MESSAGES);
+    localStorage.removeItem(STORAGE_KEYS.PREFERENCES);
+    localStorage.removeItem(STORAGE_KEYS.SESSION_ID);
+    
+    // Reset state
+    setMessages([]);
+    setPreferences({
+      allergies: [],
+      dislikes: [],
+      cuisine: "",
+      budget: undefined,
+    });
+    
+    // Generate new session
+    const newSessionId = generateSessionId();
+    setSessionId(newSessionId);
+    saveToStorage(STORAGE_KEYS.SESSION_ID, newSessionId);
+    
+    console.log('Session cleared, new sessionId:', newSessionId);
+  };
+
   return (
     <div className="min-h-[100vh] grid grid-rows-[auto_1fr_auto] bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-slate-100">
       <header className="sticky top-0 z-10 backdrop-blur bg-slate-900/70 border-b border-white/10">
         <div className="max-w-4xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
           <div className="font-semibold">Nutritionist Assistant</div>
           <div className="flex items-center gap-2">
+            <button
+              onClick={clearSession}
+              className="bg-slate-800 hover:bg-slate-700 border border-white/10 rounded px-2 py-1 text-sm"
+              title="Clear chat history and start new session"
+            >
+              Clear Session
+            </button>
             <select
               className="bg-slate-800 border border-white/10 rounded px-2 py-1"
               value={provider}
