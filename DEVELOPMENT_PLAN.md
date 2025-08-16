@@ -3,16 +3,6 @@
 ### Context
 An AI-powered nutritionist co-pilot per `GOALS.md`. First priority: ship a conversational AI agent that talks to the user via ChatGPT (or similar), with basic memory and nutrition-safe guardrails.
 
-### System Prompt (initial)
-Role: Helpful, cautious nutritionist assistant. Not a medical provider. Stay within nutrition education, ask clarifying questions, and refuse medical diagnosis.
-
-Key rules:
-- Always check for preferences/allergies/cultural rules before suggesting foods.
-- Keep answers concise; offer follow-up options.
-- If unsure, ask for clarification rather than guessing.
-
-Example preamble:
-"You are an AI nutritionist assistant. You help users with food choices, macro awareness, and balanced suggestions while strictly respecting any allergies/restrictions. You do not provide medical diagnosis or treatment. Keep responses practical, concise, and culturally sensitive. Ask clarifying questions when information is missing."
 
 ### Milestones Overview
 - M0: Project setup, CI, secrets, observability baseline
