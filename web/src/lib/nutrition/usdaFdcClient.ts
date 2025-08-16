@@ -1,3 +1,5 @@
+import type { FoodItem } from "./types";
+
 export interface FdcSearchResult {
   fdcId: number;
   description: string;
@@ -51,6 +53,63 @@ export class UsdaFdcClient {
     if (!res.ok) throw new Error(`FDC getFood failed: ${res.status}`);
     const json = await res.json();
     return json as FdcFoodDetail;
+  }
+
+  /**
+   * Convert USDA FDC food detail to our FoodItem format
+   */
+  convertToFoodItem(fdcFood: FdcFoodDetail): FoodItem {
+    // Extract key nutrients from the nutrients array
+    const nutrients = fdcFood.foodNutrients.reduce((acc, nutrient) => {
+      const name = nutrient.nutrientName.toLowerCase();
+      if (name.includes('energy') || name.includes('calorie')) {
+        acc.calories = nutrient.value;
+      } else if (name.includes('protein')) {
+        acc.protein = nutrient.value;
+      } else if (name.includes('carbohydrate') && !name.includes('fiber')) {
+        acc.carbs = nutrient.value;
+      } else if (name.includes('total lipid') || name.includes('fat')) {
+        acc.fat = nutrient.value;
+      } else if (name.includes('fiber')) {
+        acc.fiber = nutrient.value;
+      } else if (name.includes('sugar')) {
+        acc.sugar = nutrient.value;
+      }
+      return acc;
+    }, {} as any);
+
+    return {
+      id: `usda_${fdcFood.fdcId}`,
+      name: fdcFood.description,
+      basePortion: { quantity: 100, unit: "g" },
+      macrosPerBase: {
+        caloriesKcal: nutrients.calories || 0,
+        proteinG: nutrients.protein || 0,
+        carbsG: nutrients.carbs || 0,
+        fatG: nutrients.fat || 0,
+        fiberG: nutrients.fiber,
+        sugarG: nutrients.sugar,
+      },
+      metadata: {
+        source: 'usda_fdc' as const,
+        lastUpdated: new Date(),
+        confidence: 0.95, // USDA data is highly reliable
+      },
+    };
+  }
+
+  /**
+   * Test connection to USDA FDC API
+   */
+  async testConnection(): Promise<boolean> {
+    try {
+      // Try a simple search to test connectivity
+      await this.search("apple", 1);
+      return true;
+    } catch (error) {
+      console.warn('USDA FDC connection test failed:', error);
+      return false;
+    }
   }
 }
 

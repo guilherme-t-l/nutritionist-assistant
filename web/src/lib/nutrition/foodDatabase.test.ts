@@ -41,20 +41,20 @@ describe("Food Database", () => {
     expect(oats?.macrosPerBase.fatG).toBe(6.9);
   });
 
-  it("should work with macro engine", () => {
+  it("should work with macro engine", async () => {
     const engine = new MacroEngine(FOOD_DATABASE, { pieceToGramMap: PIECE_MAP });
     
     // Test a simple calculation
-    const macros = engine.computeItemMacros("chicken_breast_cooked", { quantity: 150, unit: "g" });
+    const macros = await engine.computeItemMacros("chicken_breast_cooked", { quantity: 150, unit: "g" });
     expect(macros.caloriesKcal).toBeCloseTo(247.5, 1); // 165 * 1.5
     expect(macros.proteinG).toBeCloseTo(46.5, 1); // 31 * 1.5
   });
 
-  it("should handle different units correctly", () => {
+  it("should handle different units correctly", async () => {
     const engine = new MacroEngine(FOOD_DATABASE, { pieceToGramMap: PIECE_MAP });
     
     // Test piece-based calculation
-    const macros = engine.computeItemMacros("egg_whole", { quantity: 2, unit: "piece" });
+    const macros = await engine.computeItemMacros("egg_whole", { quantity: 2, unit: "piece" });
     expect(macros.caloriesKcal).toBeCloseTo(155, 1); // 2 * 50g * (155/100)
   });
 

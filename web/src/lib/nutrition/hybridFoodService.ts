@@ -1,11 +1,12 @@
 import type { FoodItem } from "./types";
 import { FOOD_DATABASE, getFoodById as getLocalFoodById, searchFoods as searchLocalFoods } from "./foodDatabase";
 import { OpenFoodFactsClient, type OpenFoodFactsProduct } from "./openFoodFactsClient";
+import { UsdaFdcClient } from "./usdaFdcClient";
 
 export interface FoodSearchResult {
   foods: FoodItem[];
   totalCount: number;
-  source: 'local' | 'open_food_facts' | 'hybrid';
+  source: 'local' | 'open_food_facts' | 'usda_fdc' | 'hybrid';
   query: string;
   hasMore: boolean;
 }
@@ -13,25 +14,36 @@ export interface FoodSearchResult {
 export interface FoodServiceOptions {
   enableOpenFoodFacts?: boolean;
   enableLocalDatabase?: boolean;
+  enableUsdaFdc?: boolean;
   enableUserContributions?: boolean;
   maxResults?: number;
   cacheResults?: boolean;
+  usdaApiKey?: string;
 }
 
 export class HybridFoodService {
   private openFoodFactsClient: OpenFoodFactsClient;
+  private usdaFdcClient: UsdaFdcClient | null = null;
   private options: Required<FoodServiceOptions>;
   private cache: Map<string, { data: FoodItem[]; timestamp: number }> = new Map();
   private cacheExpiryMs: number = 5 * 60 * 1000; // 5 minutes
 
   constructor(options: FoodServiceOptions = {}) {
     this.openFoodFactsClient = new OpenFoodFactsClient();
+    
+    // Initialize USDA FDC client if API key is provided
+    if (options.usdaApiKey) {
+      this.usdaFdcClient = new UsdaFdcClient(options.usdaApiKey);
+    }
+    
     this.options = {
       enableOpenFoodFacts: true,
       enableLocalDatabase: true,
+      enableUsdaFdc: !!options.usdaApiKey,
       enableUserContributions: true,
       maxResults: 50,
       cacheResults: true,
+      usdaApiKey: '',
       ...options,
     };
   }
@@ -57,7 +69,7 @@ export class HybridFoodService {
     }
 
     const results: FoodItem[] = [];
-    let source: 'local' | 'open_food_facts' | 'hybrid' = 'local';
+    let source: 'local' | 'open_food_facts' | 'usda_fdc' | 'hybrid' = 'local';
 
     try {
       // 1. Try Open Food Facts first (primary source)
@@ -71,11 +83,35 @@ export class HybridFoodService {
             source = 'open_food_facts';
           }
         } catch (error) {
-          console.warn('Open Food Facts search failed, falling back to local database:', error);
+          console.warn('Open Food Facts search failed, falling back to other sources:', error);
         }
       }
 
-      // 2. Fall back to local database if needed
+      // 2. Try USDA FDC if available and we need more results
+      if (this.options.enableUsdaFdc && this.usdaFdcClient && results.length < this.options.maxResults) {
+        try {
+          const remainingSlots = this.options.maxResults - results.length;
+          const usdaResults = await this.usdaFdcClient.search(query, remainingSlots);
+          
+          for (const usdaResult of usdaResults) {
+            try {
+              const fdcFood = await this.usdaFdcClient.getFood(usdaResult.fdcId);
+              const convertedFood = this.usdaFdcClient.convertToFoodItem(fdcFood);
+              results.push(convertedFood);
+            } catch (error) {
+              console.warn(`Failed to fetch USDA food ${usdaResult.fdcId}:`, error);
+            }
+          }
+          
+          if (results.length > 0) {
+            source = source === 'open_food_facts' ? 'hybrid' : 'usda_fdc';
+          }
+        } catch (error) {
+          console.warn('USDA FDC search failed, falling back to local database:', error);
+        }
+      }
+
+      // 3. Fall back to local database if needed
       if (this.options.enableLocalDatabase && results.length < this.options.maxResults) {
         const localResults = searchLocalFoods(query);
         const remainingSlots = this.options.maxResults - results.length;
@@ -97,7 +133,7 @@ export class HybridFoodService {
         }
       }
 
-      // 3. Add user contributions if enabled
+      // 4. Add user contributions if enabled
       if (this.options.enableUserContributions) {
         // TODO: Implement user contributions system
         // This would query a user-contributed foods database
@@ -167,6 +203,19 @@ export class HybridFoodService {
       }
     }
 
+    // Check if it's a USDA FDC ID
+    if (id.startsWith('usda_') && this.usdaFdcClient) {
+      try {
+        const fdcId = parseInt(id.replace('usda_', ''));
+        const fdcFood = await this.usdaFdcClient.getFood(fdcId);
+        if (fdcFood) {
+          return this.usdaFdcClient.convertToFoodItem(fdcFood);
+        }
+      } catch (error) {
+        console.warn('Failed to fetch USDA FDC food:', error);
+      }
+    }
+
     // TODO: Check user contributions
     return null;
   }
@@ -192,11 +241,13 @@ export class HybridFoodService {
   async testConnectivity(): Promise<{
     localDatabase: boolean;
     openFoodFacts: boolean;
+    usdaFdc: boolean;
     overall: boolean;
   }> {
     const results = {
       localDatabase: this.options.enableLocalDatabase && FOOD_DATABASE.length > 0,
       openFoodFacts: false,
+      usdaFdc: false,
       overall: false,
     };
 
@@ -208,7 +259,15 @@ export class HybridFoodService {
       }
     }
 
-    results.overall = results.localDatabase || results.openFoodFacts;
+    if (this.options.enableUsdaFdc && this.usdaFdcClient) {
+      try {
+        results.usdaFdc = await this.usdaFdcClient.testConnection();
+      } catch (error) {
+        console.warn('USDA FDC connectivity test failed:', error);
+      }
+    }
+
+    results.overall = results.localDatabase || results.openFoodFacts || results.usdaFdc;
     return results;
   }
 
@@ -218,12 +277,14 @@ export class HybridFoodService {
   getStats(): {
     localFoods: number;
     openFoodFactsAvailable: boolean;
+    usdaFdcAvailable: boolean;
     cacheSize: number;
     cacheHitRate: number;
   } {
     return {
       localFoods: FOOD_DATABASE.length,
       openFoodFactsAvailable: this.options.enableOpenFoodFacts,
+      usdaFdcAvailable: this.options.enableUsdaFdc,
       cacheSize: this.cache.size,
       cacheHitRate: 0, // TODO: Implement cache hit tracking
     };
@@ -236,8 +297,8 @@ export class HybridFoodService {
     const seen = new Set<string>();
     const result: FoodItem[] = [];
     
-    // Sort by source priority: Open Food Facts > Local > User
-    const priorityOrder = ['open_food_facts', 'local', 'user_contributed'];
+    // Sort by source priority: Open Food Facts > USDA FDC > Local > User
+    const priorityOrder = ['open_food_facts', 'usda_fdc', 'local', 'user_contributed'];
     
     foods.sort((a, b) => {
       const aPriority = priorityOrder.indexOf(a.metadata?.source || 'local');
