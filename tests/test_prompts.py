@@ -145,6 +145,52 @@ def test_system_prompt_includes_macro_targets_when_set() -> None:
     assert "fat" in prompt.lower()
 
 
+def test_system_prompt_uses_default_tolerance_band() -> None:
+    profile = UserProfile(goal="maintain", calorie_target=2000)
+
+    prompt = build_create_system_prompt(profile)
+
+    assert "ideally within 5%, never more than 10%" in prompt
+    assert "Target protein" not in prompt
+    assert "Target carbs" not in prompt
+    assert "Target fat" not in prompt
+
+
+def test_system_prompt_uses_odd_tolerance_on_calories_and_set_macros() -> None:
+    profile = UserProfile(
+        goal="maintain",
+        calorie_target=2000,
+        protein_g_target=150,
+        carbs_g_target=200,
+        fat_g_target=60,
+        target_tolerance_pct=3,
+    )
+
+    prompt = build_create_system_prompt(profile)
+
+    band = "ideally within 1.5%, never more than 3%"
+    assert f"2000 kcal/day, {band}." in prompt
+    assert f"Target protein: 150g per day, {band}." in prompt
+    assert f"Target carbs: 200g per day, {band}." in prompt
+    assert f"Target fat: 60g per day, {band}." in prompt
+
+
+def test_system_prompt_omits_unset_macros_when_tolerance_is_set() -> None:
+    profile = UserProfile(
+        goal="gain_muscle",
+        calorie_target=2500,
+        protein_g_target=150,
+        target_tolerance_pct=3,
+    )
+
+    prompt = build_create_system_prompt(profile)
+
+    assert "ideally within 1.5%, never more than 3%" in prompt
+    assert "Target protein" in prompt
+    assert "Target carbs" not in prompt
+    assert "Target fat" not in prompt
+
+
 def test_system_prompt_omits_macro_targets_when_unset() -> None:
     profile = UserProfile(goal="maintain", calorie_target=2000)
 

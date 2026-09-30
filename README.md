@@ -27,6 +27,8 @@ uv run uvicorn src.app.main:app --reload
 
 Then open <http://localhost:8000/> to fill in the onboarding form and chat with the agent.
 
+The preferences form has one slider: one percent applied to calories and to every macro target that is set, range 1–20, default 10.
+
 Health check: <http://localhost:8000/health> — should return `{"status": "ok"}`.
 
 ## Run the tests

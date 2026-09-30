@@ -77,6 +77,14 @@ class UserProfile(BaseModel):
         le=8,
         description="How many meals the user eats per day — shapes plan length.",
     )
+    # One percent for calories and every macro target that is set.
+    # Missing on old profile_json → 10, via this default. No migration.
+    target_tolerance_pct: int = Field(
+        default=10,
+        ge=1,
+        le=20,
+        description="How far a day's totals may sit from calorie and set macro targets, in percent.",
+    )
 
 
 # A single food item inside a meal, with its own macros.

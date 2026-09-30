@@ -159,13 +159,17 @@ def test_target_accuracy_unset_macros_are_skipped() -> None:
 
 
 def test_target_accuracy_calorie_just_inside_5_percent() -> None:
-    profile = UserProfile(goal="maintain", calorie_target=2100)  # plan = 2000, off 4.76%
+    # Plan is 2000 kcal. Target 2200 is 9.1% off — inside the default ±10% band.
+    profile = UserProfile(goal="maintain", calorie_target=2200)
     result = target_accuracy.score(_plan_2000_kcal(), profile)
     assert result.passed is True
 
 
 def test_target_accuracy_calorie_just_outside_5_percent() -> None:
-    profile = UserProfile(goal="maintain", calorie_target=2200)  # plan = 2000, off 9.1%
+    # The same 9.1% miss fails when the slider is tightened to 5%.
+    profile = UserProfile(
+        goal="maintain", calorie_target=2200, target_tolerance_pct=5
+    )
     result = target_accuracy.score(_plan_2000_kcal(), profile)
     assert result.passed is False
 
