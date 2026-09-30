@@ -106,6 +106,20 @@ class TestUserProfile:
         with pytest.raises(ValidationError):
             UserProfile(goal="maintain", calorie_target=2000, fat_g_target=-5)
 
+    def test_target_tolerance_pct_defaults_to_10_and_rejects_out_of_range(self) -> None:
+        profile = UserProfile(goal="maintain", calorie_target=2000)
+        assert profile.target_tolerance_pct == 10
+
+        parsed = UserProfile.model_validate(
+            {"goal": "maintain", "calorie_target": 2000}
+        )
+        assert parsed.target_tolerance_pct == 10
+
+        with pytest.raises(ValidationError):
+            UserProfile(goal="maintain", calorie_target=2000, target_tolerance_pct=0)
+        with pytest.raises(ValidationError):
+            UserProfile(goal="maintain", calorie_target=2000, target_tolerance_pct=21)
+
 
 class TestMealPlan:
     @staticmethod

@@ -87,7 +87,8 @@ class TestPromptLoading:
     def test_v1_exists_and_mentions_fail_rules(self) -> None:
         text = load_judge_prompt("v1")
         assert "Allergen" in text or "allergen" in text.lower()
-        assert "10%" in text
+        assert "target_tolerance_pct" in text
+        assert "absent" in text and "use 10" in text
         assert "pass" in text and "fail" in text
 
 

@@ -104,7 +104,7 @@ def _build_shared_context(profile: UserProfile) -> str:
 
     "Primary objective:\n"
     f"- Help the user {goal}.\n"
-    f"- Target approximately {profile.calorie_target} kcal/day, ideally within 5% and never more than 10%.\n"
+    f"- Target approximately {profile.calorie_target} kcal/day, {_tolerance_band(profile.target_tolerance_pct)}.\n"
     f"{macros}"
 
     "Preferences:\n"
@@ -233,6 +233,13 @@ def _flavors(flavors: list[str]) -> str:
     return ", ".join(flavors)
 
 
+# Hard cap is the slider. "Ideally within" is half of it.
+# Even percents stay whole (10 → 5). Odd percents use one decimal (3 → 1.5).
+def _tolerance_band(pct: int) -> str:
+    half_text = str(pct // 2) if pct % 2 == 0 else f"{pct / 2:.1f}"
+    return f"ideally within {half_text}%, never more than {pct}%"
+
+
 # Optional macro targets (g/day). Returns "" when none are set so the shared
 # prompt does not gain a blank line for unset fields.
 def _macro_targets(profile: UserProfile) -> str:
@@ -246,7 +253,8 @@ def _macro_targets(profile: UserProfile) -> str:
     set_targets = [(label, val) for label, val in targets if val is not None]
     if not set_targets:
         return ""
-    lines = [f"Target {label}: {val}g per day." for label, val in set_targets]
+    band = _tolerance_band(profile.target_tolerance_pct)
+    lines = [f"Target {label}: {val}g per day, {band}." for label, val in set_targets]
     # Join with newlines and end with \n so the next prompt line sits cleanly.
     return "\n".join(lines) + "\n"
 

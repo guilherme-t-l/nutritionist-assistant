@@ -220,6 +220,83 @@
       font-size: 0.68rem;
     }
 
+    /* Thin olive track, same quiet surface as the other fields. */
+    .tolerance { margin-top: 0.7rem; }
+    .tolerance input[type="range"] {
+      --fill: 47.37%;
+      -webkit-appearance: none;
+      appearance: none;
+      width: 100%;
+      height: 1.15rem;
+      margin: 0;
+      padding: 0;
+      background: transparent;
+      border: 0;
+      border-radius: 0;
+      cursor: pointer;
+    }
+    .tolerance input[type="range"]:focus {
+      outline: none;
+      border: 0;
+      box-shadow: none;
+    }
+    .tolerance input[type="range"]::-webkit-slider-runnable-track {
+      height: 2px;
+      border-radius: 999px;
+      background: linear-gradient(
+        to right,
+        var(--accent) var(--fill),
+        var(--line-strong) var(--fill)
+      );
+    }
+    .tolerance input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 16px;
+      height: 16px;
+      margin-top: -7px;
+      border-radius: 50%;
+      background: var(--surface-raised);
+      border: 1.5px solid var(--accent);
+      box-shadow: 0 1px 2px rgba(28, 27, 25, 0.12);
+    }
+    .tolerance input[type="range"]::-moz-range-track {
+      height: 2px;
+      border: 0;
+      border-radius: 999px;
+      background: var(--line-strong);
+    }
+    .tolerance input[type="range"]::-moz-range-progress {
+      height: 2px;
+      border-radius: 999px;
+      background: var(--accent);
+    }
+    .tolerance input[type="range"]::-moz-range-thumb {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: var(--surface-raised);
+      border: 1.5px solid var(--accent);
+      box-shadow: 0 1px 2px rgba(28, 27, 25, 0.12);
+    }
+    .tolerance input[type="range"]:focus-visible::-webkit-slider-thumb,
+    .tolerance input[type="range"]:focus-visible::-moz-range-thumb {
+      box-shadow: 0 0 0 3px var(--sage-soft);
+    }
+    #target-tolerance-pct {
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+      color: var(--accent-ink);
+    }
+    .tolerance-scale {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 0.1rem;
+      font-size: 0.7rem;
+      letter-spacing: 0.04em;
+      color: var(--muted-soft);
+    }
+
     .card {
       background: var(--surface);
       border: 1px solid var(--line);
@@ -1496,6 +1573,15 @@
             </div>
           </div>
 
+          <label for="target_tolerance_pct">Targets tolerance <span class="hint" id="target-tolerance-pct">10%</span></label>
+          <div class="tolerance">
+            <input id="target_tolerance_pct" type="range" min="1" max="20" step="1" value="10" />
+            <div class="tolerance-scale" aria-hidden="true">
+              <span>1%</span>
+              <span>20%</span>
+            </div>
+          </div>
+
           <label for="meals_per_day">Meals per day</label>
           <input id="meals_per_day" type="number" min="1" max="8" value="3" required />
         </fieldset>
@@ -1936,7 +2022,24 @@
         flavor_profiles: checkedValues("flavors"),
         allergies: parseCommaList($("allergies").value),
         disliked_ingredients: parseCommaList($("disliked_ingredients").value),
+        target_tolerance_pct: Number($("target_tolerance_pct").value),
       };
+    }
+
+    function paintTargetTolerance() {
+      const el = $("target_tolerance_pct");
+      const shown = Number(el.value);
+      $("target-tolerance-pct").textContent = `${shown}%`;
+      const min = Number(el.min);
+      const max = Number(el.max);
+      const ratio = max === min ? 0 : (shown - min) / (max - min);
+      el.style.setProperty("--fill", `${ratio * 100}%`);
+    }
+
+    function showTargetTolerance(pct) {
+      const shown = Number.isFinite(Number(pct)) ? Number(pct) : 10;
+      $("target_tolerance_pct").value = shown;
+      paintTargetTolerance();
     }
 
     function setCheckboxGroup(containerId, values) {
@@ -1958,6 +2061,7 @@
       setCheckboxGroup("flavors", profile.flavor_profiles);
       $("allergies").value = (profile.allergies || []).join(", ");
       $("disliked_ingredients").value = (profile.disliked_ingredients || []).join(", ");
+      showTargetTolerance(profile.target_tolerance_pct ?? 10);
     }
 
     async function enterLoggedInFromAuth(me) {
@@ -2260,6 +2364,8 @@
         reader.readAsText(file);
       });
     }
+
+    $("target_tolerance_pct").addEventListener("input", paintTargetTolerance);
 
     $("profile-form").addEventListener("submit", async (e) => {
       e.preventDefault();
