@@ -29,6 +29,8 @@ Then open <http://localhost:8000/> to fill in the onboarding form and chat with 
 
 The preferences form has one slider: one percent applied to calories and to every macro target that is set, range 1–20, default 10.
 
+On a phone-width window (768px or narrower), the meal plan and Coach Chat are stacked. Double-tap or double-click either one, or use the small icon in that plane's top-right corner, to let that plane fill the screen. The other plane stays as a thin bar. Do it again to show both. This resets on reload.
+
 Health check: <http://localhost:8000/health> — should return `{"status": "ok"}`.
 
 ## Run the tests
