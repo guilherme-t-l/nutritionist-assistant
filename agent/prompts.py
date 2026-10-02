@@ -4,17 +4,45 @@
 #   1. Unit-test prompt wording without calling the LLM.
 #   2. Change create or edit instructions in one place, then run evals.
 #
-# How a system prompt is assembled (the important mental model):
+# Every LLM call gets two strings:
+#   system    — instructions, one long string built by gluing the parts below
+#   messages  — the conversation (one user task, or later turns)
 #
-#   SHARED context          +   MODE-SPECIFIC job text   (+ plan JSON for edit)
-#   (_build_shared_context)     (create OR edit)            (edit only)
+# The parts, in the order they can appear:
 #
-#   • /plan  → build_create_system_prompt(profile)
-#   • /chat  → build_edit_system_prompt(profile, plan, personal_foods?)
-#   • import adapt → create prompt + personal foods (if any) + a suffix in plan_import.py
+#   1. Shared context   _build_shared_context
+#                       who the agent is + this user's constraints
+#   2. Create job       _create_job_instructions
+#                       "invent a full day of N meals"
+#   3. Personal foods   format_personal_foods_section
+#                       foods this user already saved (left out when the list is empty)
+#   4. Edit job         _edit_job_instructions
+#                       "change the plan below, as little as possible"
+#   5. Plan JSON        plan.model_dump_json()
+#                       the current meal plan
+#   6. User message     the task in the conversation (not inside the system string)
 #
-# Shared = who the agent is + this user's hard constraints (calories, allergies…).
-# Create/edit = what the agent should DO with those facts (invent vs revise).
+# Which call uses which parts (top to bottom):
+#
+#   /plan
+#     system   = 1 + 2
+#     message  = "Generate my meal plan…"
+#
+#   /chat
+#     system   = 1 + 3 + 4 + 5
+#     messages = the chat history (built in the route, not here)
+#
+#   /plan/import as_is
+#     system   = a short "only structure this" prompt in plan_import.py
+#     message  = "Convert the following…" + the pasted or PDF text
+#
+#   /plan/import adapt
+#     system   = (1 + 2) + 3 + an "edit this import" suffix in plan_import.py
+#     message  = "Here is my existing meal plan…" + the pasted or PDF text
+#
+# Part 1 is a few sentences filled from the profile, in this order:
+#   persona → goal → calories and tolerance → macros (only if set)
+#   → cuisines, flavors, foods to avoid → allergies
 
 from __future__ import annotations
 
@@ -22,37 +50,36 @@ from agent.schemas import MealPlan, PersonalFood, UserProfile
 
 
 # ---------------------------------------------------------------------------
-# Constants — fixed strings reused by the builders below
+# Fixed phrases dropped into the parts above
 # ---------------------------------------------------------------------------
 
-# Maps the profile's goal enum → a short phrase after "The user goal is to …".
-# Leading underscore = "module-private": other files shouldn't import this.
+# Blank inside part 1. profile.goal "lose_weight" → "lose weight gradually…".
+# Leading underscore = module-private: other files should not import this.
 _GOAL_PHRASING = {
     "lose_weight": "lose weight gradually and sustainably",
     "maintain": "maintain their current weight",
     "gain_muscle": "gain muscle mass",
 }
 
-# First user turn for /plan. Profile details live in the system prompt;
-# this message is only the task ("please generate…").
+# Part 6 for /plan. The profile already sits in the system string,
+# so this message is only the task.
 _INITIAL_USER_MESSAGE = "Generate my meal plan based on my goals and preferences."
 
-# Prefix glued in front of pasted/PDF text for /plan/import (as_is mode):
-# "structure what they gave you" — do not rewrite for preferences.
+# Start of part 6 for /plan/import as_is. The pasted plan is appended after it.
 _IMPORT_USER_MESSAGE_PREFIX = (
     "Convert the following meal plan into the required MealPlan JSON schema. "
     "Keep the user's meals and ingredients as close as possible — do not "
     "rewrite them to match preferences:\n\n"
 )
 
-# Same idea for import adapt mode: start from their plan, fit preferences.
+# Start of part 6 for /plan/import adapt. The pasted plan is appended after it.
 _IMPORT_ADAPT_USER_MESSAGE_PREFIX = (
     "Here is my existing meal plan. Edit it to match my preferences "
     "(targets, allergies, dislikes, cuisines, meals per day). Keep what "
     "already fits; change what doesn't:\n\n"
 )
 
-# Create job text for /plan. Invent a full day; no current-plan JSON attached.
+# Part 2. Comes right after shared context. No plan JSON — there isn't one yet.
 def _create_job_instructions(meals_per_day: int) -> str:
     return f"""
 
@@ -62,7 +89,7 @@ Produce a full day of exactly {meals_per_day} meals.
 """
 
 
-# Edit job text for /chat. Placed BEFORE the plan JSON so the model reads
+# Part 4. Ends with "Current meal plan:" so part 5 (the JSON) follows immediately.
 def _edit_job_instructions(meals_per_day: int) -> str:
     return f"""
 
@@ -86,11 +113,10 @@ Current meal plan:
 
 
 # ---------------------------------------------------------------------------
-# Shared context — used by BOTH create and edit modes
+# Part 1 — shared context. Create and edit both start here.
 # ---------------------------------------------------------------------------
-# Persona + hard rules + this user's constraints.
-# Helpers below only prepare VALUES (lists joined, empty defaults).
-# The sentences here are the actual prompt the model sees.
+# The sentences in the return are what the model reads.
+# Helpers at the bottom of this file only fill the blanks.
 def _build_shared_context(profile: UserProfile) -> str:
     goal = _GOAL_PHRASING.get(profile.goal, profile.goal)
     allergies = _allergies(profile.allergies)
@@ -119,32 +145,34 @@ def _build_shared_context(profile: UserProfile) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Public builders — shared facts + the matching job constant
+# Glue the parts into one system string
 # ---------------------------------------------------------------------------
 
-# /plan (+ evals): shared + create job.
+# /plan (and the start of import adapt): part 1, then part 2.
 def build_create_system_prompt(profile: UserProfile) -> str:
-    return _build_shared_context(profile) + _create_job_instructions(profile.meals_per_day)
+    return (
+        _build_shared_context(profile)  # 1. shared context
+        + _create_job_instructions(profile.meals_per_day)  # 2. create job
+    )
 
 
-# /chat: shared constraints, then the library (only if non-empty), then the
-# edit job and the current plan JSON. An empty library adds nothing — the
-# prompt stays the same as a user who has never saved a personal food.
+# /chat: part 1 + part 3 + part 4 + part 5.
+# Part 3 is "" when this user has no saved foods, so nothing is inserted there.
 def build_edit_system_prompt(
     profile: UserProfile,
     plan: MealPlan,
     personal_foods: list[PersonalFood] | None = None,
 ) -> str:
     return (
-        _build_shared_context(profile)
-        + format_personal_foods_section(personal_foods or [])
-        + _edit_job_instructions(profile.meals_per_day)
-        + plan.model_dump_json()
+        _build_shared_context(profile)  # 1. shared context
+        + format_personal_foods_section(personal_foods or [])  # 3. or ""
+        + _edit_job_instructions(profile.meals_per_day)  # 4. edit job
+        + plan.model_dump_json()  # 5. plan JSON
     )
 
 
-# Library block for edit and for import-adapt. "" when there is nothing to say,
-# so we never send "Personal foods: none."
+# Part 3, for /chat and for import adapt.
+# "" when the list is empty — we never write "Personal foods: none."
 def format_personal_foods_section(foods: list[PersonalFood]) -> str:
     if not foods:
         return ""
@@ -171,28 +199,30 @@ Macros below are for one serving. Multiply by the number of servings you choose,
 
 
 # ---------------------------------------------------------------------------
-# User / assistant message helpers (not the system prompt)
+# Conversation lines. These are not inside the system string.
+# The three builders below are part 6 (the user task).
+# build_assistant_note is the short model reply stored in history.
 # ---------------------------------------------------------------------------
 
-# Synthetic first user turn for /plan so /plan and /chat both call llm.chat
-# with the same input shape (system + messages). Content is just the task.
+# /plan's first user message. Same shape as later turns: system + messages.
 def build_initial_user_message() -> str:
     return _INITIAL_USER_MESSAGE
 
 
-# /plan/import as_is: prefix + the user's pasted or PDF-extracted plan text.
-# .strip() removes leading/trailing whitespace so we don't waste tokens.
+# /plan/import as_is: the prefix above + the pasted or PDF text.
+# .strip() drops leading and trailing whitespace so we don't spend tokens on it.
 def build_import_user_message(source_text: str) -> str:
     return _IMPORT_USER_MESSAGE_PREFIX + source_text.strip()
 
 
-# /plan/import adapt: same pattern, but the prefix asks to fit preferences.
+# /plan/import adapt: the adapt prefix above + the pasted or PDF text.
 def build_import_adapt_user_message(source_text: str) -> str:
     return _IMPORT_ADAPT_USER_MESSAGE_PREFIX + source_text.strip()
 
 
-# What we store in conversation history instead of the full MealPlan JSON.
-# Prefer the model's own `notes` field; fall back if it left notes blank.
+# Stored in chat history in place of the full plan JSON.
+# The plan itself is already re-sent as part 5 on the next /chat turn.
+# Uses the model's own `notes` when it wrote some; otherwise a short fallback.
 def build_assistant_note(plan: MealPlan) -> str:
     note = plan.notes.strip()
     if note:
@@ -201,8 +231,10 @@ def build_assistant_note(plan: MealPlan) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Value helpers — each returns ONLY the variable inserted into the template
-# above (joined lists / empty defaults). Not full sentences.
+# Blanks inside part 1, plus one catalog line inside part 3.
+# Each returns a short phrase, not its own section of the prompt.
+# An empty list becomes a default word ("none", "none known") so the
+# sentence still reads when the user left that field blank.
 # ---------------------------------------------------------------------------
 
 # ['peanuts', 'shellfish'] → 'peanuts, shellfish' ; [] → 'none known'
@@ -259,12 +291,14 @@ def _macro_targets(profile: UserProfile) -> str:
     return "\n".join(lines) + "\n"
 
 
+# 1.0 → "1" ; 1.5 → "1.5". Used in a personal-food catalog line (part 3).
 def _format_serving_size(value: float) -> str:
     if float(value).is_integer():
         return str(int(value))
     return f"{value:g}"
 
 
+# One bullet in the part 3 catalog: name, serving, macros, ingredients if any.
 def _format_personal_food_line(food: PersonalFood) -> str:
     size = _format_serving_size(food.serving_size)
     line = (
