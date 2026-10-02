@@ -55,7 +55,7 @@ def test_system_prompt_includes_allergies_loudly() -> None:
 
     assert "peanuts" in prompt
     assert "shellfish" in prompt
-    assert "CRITICAL" in prompt
+    assert "Hard safety constraints" in prompt
 
 
 def test_system_prompt_uses_none_known_when_allergies_empty() -> None:
@@ -63,9 +63,9 @@ def test_system_prompt_uses_none_known_when_allergies_empty() -> None:
 
     prompt = build_create_system_prompt(profile)
 
-    # Template always includes the CRITICAL line; empty list → "none known".
-    assert "allergic to: none known" in prompt
-    assert "CRITICAL" in prompt
+    # The safety heading is always present; an empty list becomes "none known".
+    assert "Allergies: none known" in prompt
+    assert "Hard safety constraints" in prompt
 
 
 def test_system_prompt_mentions_calorie_target_and_cuisines_plural() -> None:
@@ -80,9 +80,8 @@ def test_system_prompt_mentions_calorie_target_and_cuisines_plural() -> None:
     assert "2800" in prompt
     assert "Bahian" in prompt
     assert "Japanese" in prompt
-    # The phrasing is plural even when there could be one cuisine; this
-    # locks in the "cuisines plural" wording.
-    assert "Cuisine preferences" in prompt
+    # The heading stays plural even when the profile has only one cuisine.
+    assert "Preferred cuisines" in prompt
     assert "gain muscle" in prompt
 
 
@@ -97,18 +96,17 @@ def test_system_prompt_keeps_allergies_and_dislikes_distinct() -> None:
 
     prompt = build_create_system_prompt(profile)
 
-    assert "CRITICAL" in prompt
+    assert "Hard safety constraints" in prompt
     assert "shellfish" in prompt
-    assert "AVOID WHEN POSSIBLE" in prompt
+    assert "Foods to avoid when reasonably possible" in prompt
     assert "cilantro" in prompt
-    # And crucially — they should NOT appear on the same rule line. The
-    # rough check: the CRITICAL block should NOT mention cilantro, and
-    # the AVOID block should NOT mention shellfish.
-    critical_start = prompt.index("CRITICAL")
-    avoid_start = prompt.index("AVOID WHEN POSSIBLE")
-    critical_block = prompt[critical_start:avoid_start]
-    avoid_block = prompt[avoid_start:]
-    assert "cilantro" not in critical_block
+    # Dislikes are listed first, then the safety heading. Slice each
+    # section so a dislike cannot hide on the allergy line, or the reverse.
+    avoid_start = prompt.index("Foods to avoid when reasonably possible")
+    safety_start = prompt.index("Hard safety constraints")
+    avoid_block = prompt[avoid_start:safety_start]
+    safety_block = prompt[safety_start:]
+    assert "cilantro" not in safety_block
     assert "shellfish" not in avoid_block
 
 
@@ -121,9 +119,8 @@ def test_system_prompt_uses_none_when_dislikes_empty() -> None:
 
     prompt = build_create_system_prompt(profile)
 
-    # Template always includes the AVOID line; empty list → "none".
-    assert "dislikes: none" in prompt
-    assert "AVOID WHEN POSSIBLE" in prompt
+    # The avoid line is always present; an empty list becomes "none".
+    assert "Foods to avoid when reasonably possible: none" in prompt
 
 
 def test_system_prompt_includes_macro_targets_when_set() -> None:
@@ -287,7 +284,7 @@ def test_edit_prompt_includes_shared_profile_constraints() -> None:
 
     assert "Brazilian nutritionist" in prompt
     assert "1800" in prompt
-    assert "CRITICAL" in prompt
+    assert "Hard safety constraints" in prompt
     assert "peanuts" in prompt
     # Usual count is guidance; create's hard lock must not appear in edit.
     assert "usual meal count is 4" in prompt
