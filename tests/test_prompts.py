@@ -7,10 +7,13 @@ exact phrases they emit — no LLM, no network, no fixtures.
 from __future__ import annotations
 
 from agent.prompts import (
+    _build_shared_context,
+    _edit_job_instructions,
     build_assistant_note,
     build_create_system_prompt,
     build_edit_system_prompt,
     build_initial_user_message,
+    format_personal_foods_section,
 )
 from agent.schemas import Food, Meal, MealPlan, PersonalFood, UserProfile
 
@@ -252,6 +255,84 @@ def test_create_prompt_states_create_job_and_omits_edit_plan() -> None:
 
 
 # --- Edit-only ---------------------------------------------------------------
+
+
+def test_edit_prompt_is_four_pieces_and_locks_eaten_meals_in_one_json() -> None:
+    profile = UserProfile(
+        goal="maintain",
+        calorie_target=2000,
+        allergies=["peanuts"],
+        meals_per_day=3,
+    )
+    eaten = Meal(
+        name="Breakfast",
+        description="Already eaten.",
+        eaten=True,
+        ingredients=[
+            Food(
+                name="tapioca",
+                quantity="1 unit",
+                calories=300,
+                protein_g=4,
+                carbs_g=50,
+                fat_g=8,
+            ),
+        ],
+    )
+    later = Meal(
+        name="Lunch",
+        description="Still open.",
+        eaten=False,
+        ingredients=[
+            Food(
+                name="rice",
+                quantity="1 xícara",
+                calories=200,
+                protein_g=4,
+                carbs_g=40,
+                fat_g=1,
+            ),
+        ],
+    )
+    plan = MealPlan(meals=[eaten, later], notes="Leave breakfast.")
+    food = _pancake()
+
+    prompt = build_edit_system_prompt(profile, plan, [food])
+    plan_json = plan.model_dump_json()
+    assert prompt == (
+        _build_shared_context(profile)
+        + format_personal_foods_section([food])
+        + _edit_job_instructions(profile.meals_per_day)
+        + plan_json
+    )
+    # Guest chat inserts an empty personal-foods piece. Still four pieces.
+    bare = build_edit_system_prompt(profile, plan)
+    assert bare == (
+        _build_shared_context(profile)
+        + format_personal_foods_section([])
+        + _edit_job_instructions(profile.meals_per_day)
+        + plan_json
+    )
+    assert prompt.count(plan_json) == 1
+    assert bare.count(plan_json) == 1
+    loaded = MealPlan.model_validate_json(plan_json)
+    assert loaded.meals[0].eaten is True
+    assert loaded.meals[1].eaten is False
+    assert "A meal with eaten true was already eaten." in prompt
+    assert "Copy it exactly." in prompt
+    assert "Do not rewrite, remove, or redistribute it." in prompt
+    assert (
+        "Fit the other meals around the calories and macros those eaten meals already use."
+        in prompt
+    )
+    assert (
+        "The reply's one plan JSON must still include every meal that is not eaten, rewritten to fit the day."
+        in prompt
+    )
+    assert "Do not return a plan that contains only the eaten meals." in prompt
+    assert "Remove a meal only when the user skipped a meal that is not eaten." in prompt
+    assert "If the user says they skipped a meal that is not eaten" in prompt
+    assert "If the user says they skipped a meal, treat it as not eaten" not in prompt
 
 
 def test_edit_prompt_includes_edit_job_and_current_plan() -> None:

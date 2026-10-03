@@ -213,3 +213,74 @@ def test_chat_failure_does_not_overwrite_plan(
     assert after.active_plan is not None
     assert after.active_plan.model_dump() == plan_before
     assert after.profile == before.profile
+
+
+def test_eaten_check_writes_only_that_flag_and_discard_keeps_it(
+    client: TestClient, user_store: FakeUserStore, fake_llm: FakeLLM
+) -> None:
+    client.post("/login", json={"username": "demo1", "password": "password1"})
+    plan_resp = client.post("/plan", json=PLAN_BODY)
+    assert plan_resp.status_code == 200, plan_resp.text
+    session_id = plan_resp.json()["session_id"]
+
+    before = user_store.get_user("demo1")
+    assert before is not None
+    assert before.active_plan is not None
+    saved_before = before.active_plan.model_dump()
+
+    updated = MealPlan.model_validate_json(CANNED_PLAN_JSON)
+    meals = list(updated.meals)
+    foods = list(meals[0].ingredients)
+    foods[0] = foods[0].model_copy(update={"name": "oat flour", "quantity": "30 g"})
+    meals[0] = meals[0].model_copy(
+        update={"name": "Chat breakfast", "ingredients": foods}
+    )
+    fake_llm.canned_reply = updated.model_copy(
+        update={"meals": meals, "notes": "Edited foods."}
+    ).model_dump_json()
+
+    chat = client.post(
+        "/chat",
+        json={"session_id": session_id, "message": "change breakfast"},
+    )
+    assert chat.status_code == 200, chat.text
+    assert chat.json()["plan"]["meals"][0]["name"] == "Chat breakfast"
+    assert chat.json()["plan"]["meals"][0]["ingredients"][0]["name"] == "oat flour"
+
+    after_chat = user_store.get_user("demo1")
+    assert after_chat is not None
+    assert after_chat.active_plan is not None
+    assert after_chat.active_plan.model_dump() == saved_before
+
+    marked = client.post(
+        "/plan/eaten",
+        json={"session_id": session_id, "meal_index": 0, "eaten": True},
+    )
+    assert marked.status_code == 200, marked.text
+    working = marked.json()["plan"]
+    assert working["meals"][0]["name"] == "Chat breakfast"
+    assert working["meals"][0]["ingredients"][0]["name"] == "oat flour"
+    assert working["meals"][0]["eaten"] is True
+    assert working["notes"] == "Edited foods."
+
+    saved = user_store.get_user("demo1")
+    assert saved is not None
+    assert saved.active_plan is not None
+    dumped = saved.active_plan.model_dump()
+    assert dumped["notes"] == saved_before["notes"]
+    assert dumped["meals"][0]["eaten"] is True
+    assert dumped["meals"][1]["eaten"] is False
+    assert dumped["meals"][2]["eaten"] is False
+    for index, meal in enumerate(dumped["meals"]):
+        previous = saved_before["meals"][index]
+        assert meal["name"] == previous["name"]
+        assert meal["description"] == previous["description"]
+        assert meal["ingredients"] == previous["ingredients"]
+
+    discarded = client.post("/plan/discard", json={"session_id": session_id})
+    assert discarded.status_code == 200, discarded.text
+    restored = discarded.json()["plan"]
+    assert restored["meals"][0]["name"] == "Tapioca com queijo"
+    assert restored["meals"][0]["ingredients"][0]["name"] == "tapioca flour"
+    assert restored["meals"][0]["eaten"] is True
+    assert restored["notes"] == "Balanced day."

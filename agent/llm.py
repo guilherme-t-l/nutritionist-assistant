@@ -62,7 +62,7 @@ class LLM(Protocol):
 class GeminiLLM:
     # gemini-2.5-flash is the fast, cheap, free-tier model.
     # Upgrade to gemini-2.5-pro for harder reasoning if ever needed.
-    DEFAULT_MODEL = "gemini-2.5-flash"
+    DEFAULT_MODEL = "gemini-3.5-flash"
 
     # Called once, from the get_llm() factory below, the first time anyone
     # needs an LLM in the process. Stores the SDK client so subsequent calls

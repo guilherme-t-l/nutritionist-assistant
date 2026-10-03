@@ -1297,6 +1297,47 @@
     .meal-name {
       font-size: 1.3rem;
     }
+    .meal-title-row {
+      display: flex;
+      align-items: center;
+      gap: 0.7rem;
+      width: 100%;
+    }
+    .meal-eaten {
+      appearance: none;
+      -webkit-appearance: none;
+      flex: 0 0 auto;
+      width: 1.25rem;
+      height: 1.25rem;
+      padding: 0;
+      border-radius: 50%;
+      border: 1.5px solid var(--sage);
+      background: transparent;
+      color: var(--surface);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      font-family: var(--font-body);
+    }
+    .meal-eaten:hover { border-color: var(--accent); }
+    .meal-eaten:focus-visible {
+      outline: none;
+      box-shadow: 0 0 0 3px var(--sage-soft);
+    }
+    .meal-eaten[aria-pressed="true"] {
+      background: var(--sage);
+      border-color: var(--sage);
+    }
+    .meal-block.is-eaten .meal-name,
+    .meal-block.is-eaten .meal-desc,
+    .meal-block.is-eaten .food-name,
+    .meal-block.is-eaten .meal-total strong {
+      color: var(--muted);
+    }
+    .meal-block.is-eaten .meal-accent {
+      background: var(--muted-soft);
+    }
     .meal-accent {
       display: block;
       width: 2.25rem;
@@ -2479,8 +2520,8 @@
           : "Today's menu";
       }
 
-      day.meals.forEach((meal) => {
-        html += renderMeal(meal);
+      day.meals.forEach((meal, index) => {
+        html += renderMeal(meal, index);
       });
 
       // Daily totals — sum across meals. Schema gives us per-meal P/C/F/kcal
@@ -2516,9 +2557,46 @@
           renderPlan(state.plan);
         });
       });
+
+      card.querySelectorAll(".meal-eaten").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const mealIndex = Number(btn.dataset.mealIndex);
+          const eaten = btn.getAttribute("aria-pressed") !== "true";
+          markMealEaten(mealIndex, eaten);
+        });
+      });
     }
 
-    function renderMeal(meal) {
+    let mealEatenInFlight = false;
+
+    async function markMealEaten(mealIndex, eaten) {
+      if (mealEatenInFlight) return;
+      if (!state.sessionId || !state.plan || !Array.isArray(state.plan.meals)) return;
+      if (!Number.isInteger(mealIndex) || mealIndex < 0 || mealIndex >= state.plan.meals.length) return;
+      mealEatenInFlight = true;
+      try {
+        const res = await fetch("/plan/eaten", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            session_id: state.sessionId,
+            meal_index: mealIndex,
+            eaten: eaten,
+          }),
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        state.plan = data.plan;
+        persistPlan(data.plan);
+        renderPlan(state.plan);
+      } catch (_) {
+        // Leave the card as it was. No Coach Chat line.
+      } finally {
+        mealEatenInFlight = false;
+      }
+    }
+
+    function renderMeal(meal, index) {
       // Meal heading comes only from the agent (`meal.name`). We used to
       // overlay a position-based label (Breakfast/Lunch/Dinner by index),
       // which drifted from the real plan whenever order or count changed.
@@ -2541,11 +2619,18 @@
       }).join("");
 
       const desc = meal.description ? `<p class="meal-desc">${escapeHtml(meal.description)}</p>` : "";
+      const eaten = !!meal.eaten;
+      const check = eaten
+        ? `<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M3.5 8.2 6.4 11.1 12.5 4.8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`
+        : "";
 
       return `
-        <section class="meal-block">
+        <section class="meal-block${eaten ? " is-eaten" : ""}">
           <div class="meal-head">
-            <h3 class="meal-name">${escapeHtml(meal.name || "")}</h3>
+            <div class="meal-title-row">
+              <button type="button" class="meal-eaten" data-meal-index="${index}" aria-pressed="${eaten ? "true" : "false"}" aria-label="${eaten ? "Mark as not eaten" : "Mark as eaten"}">${check}</button>
+              <h3 class="meal-name">${escapeHtml(meal.name || "")}</h3>
+            </div>
             <span class="meal-accent" aria-hidden="true"></span>
           </div>
           ${desc}

@@ -125,6 +125,9 @@ class Meal(BaseModel):
     name: str
     description: str
     ingredients: list[Food]
+    # Already eaten, so the coach must leave this meal as it is.
+    # Missing on old plan JSON → false, via this default. No migration.
+    eaten: bool = False
 
     # `@computed_field` turns a Python `@property` into a serialized OUTPUT
     # field (Pydantic v2). The LLM is NOT asked to produce these — they're

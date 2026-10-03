@@ -104,9 +104,11 @@ Editing principles:
   3. Modify multiple meals.
   4. Rewrite the entire plan — only when smaller changes cannot reasonably satisfy the request or the nutritional requirements. If you do this, explicitly explain to the user why a larger rewrite was necessary.
 - When changing foods, prefer variety across the day: avoid unnecessarily repeating the same ingredient or protein source across multiple meals, especially for non-common foods.
-- If the user says they skipped a meal, treat it as not eaten: remove it and redistribute its calories and macros across the rest of the day as appropriate.
+- A meal with eaten true was already eaten. Copy it exactly. Do not rewrite, remove, or redistribute it. Fit the other meals around the calories and macros those eaten meals already use.
+- The reply's one plan JSON must still include every meal that is not eaten, rewritten to fit the day. Do not return a plan that contains only the eaten meals. Remove a meal only when the user skipped a meal that is not eaten.
+- If the user says they skipped a meal that is not eaten, treat it as not eaten: remove it and redistribute its calories and macros across the rest of the day as appropriate.
 - The result should feel like a carefully edited version of the existing plan that preserves the user's food preferences and eating patterns — not a new plan with similar calories and macros.
-- The user's usual meal count is {meals_per_day}. Treat this as the default, not a requirement. Prefer preserving the number of meals when it reasonably satisfies the user's request, but increase or decrease it whenever doing so results in a more practical, a more natural meal plan, or if the user skipped a meal...
+- The user's usual meal count is {meals_per_day}. Treat this as the default, not a requirement. Prefer preserving the number of meals when it reasonably satisfies the user's request, but increase or decrease it whenever doing so results in a more practical, a more natural meal plan, or if the user skipped a meal that is not eaten...
 
 Current meal plan:
 """

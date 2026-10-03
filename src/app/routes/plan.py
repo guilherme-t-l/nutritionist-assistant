@@ -2,6 +2,8 @@
 # POST /plan/import — bring an existing plan (paste / file / PDF).
 # POST /plan/save — explicit persist of the working plan (logged-in).
 # POST /plan/discard — restore working plan from saved active_plan (logged-in).
+# POST /plan/eaten — set one meal's eaten flag. Session always; saved plan
+# only that flag, at the same index, when the user is signed in.
 #
 # Keep this file thin: no calorie math, no prompt strings, no LLM details.
 # All of that lives in the agent/ package.
@@ -106,6 +108,9 @@ def create_plan(
             detail=f"LLM returned an invalid MealPlan: {exc}",
         ) from exc
 
+    # A new plan starts unchecked, even if the model marked a meal eaten.
+    plan = _store_unchecked(plan)
+
     # Keep the full plan on the session, so it can be used in the next turn's system prompt (/chat will inject it into the system prompt on the next turn)
     session.current_plan = plan
     # History stays cheap: the user task + a short note (not raw_reply JSON with all the meal plan history details).
@@ -122,6 +127,15 @@ def create_plan(
     return PlanResponse(session_id=session_id, plan=plan)
 
 
+def _store_unchecked(plan: MealPlan) -> MealPlan:
+    """Every meal starts not eaten. Ignores eaten on a model reply or a paste."""
+    return plan.model_copy(
+        update={
+            "meals": [meal.model_copy(update={"eaten": False}) for meal in plan.meals]
+        }
+    )
+
+
 def _commit_imported_plan(
     *,
     profile: UserProfile,
@@ -132,6 +146,9 @@ def _commit_imported_plan(
     user_store: UserStore,
 ) -> PlanResponse:
     """Create session + optional DB write — shared by JSON and multipart import."""
+    # Use this plan and Edit this plan both start unchecked, including the
+    # as-is JSON shortcut that never calls the model.
+    plan = _store_unchecked(plan)
     session_id, session = store.create(profile)
     session.current_plan = plan
     # History mirrors /plan: a short user task + assistant note (not full JSON).
@@ -328,3 +345,65 @@ def discard_plan(
     session.history.clear()
     store.save(body.session_id, session)
     return DiscardPlanResponse(plan=user.active_plan)
+
+
+class EatenMealRequest(BaseModel):
+    session_id: str
+    # 0-based index in session.current_plan.meals.
+    meal_index: int
+    eaten: bool
+
+
+class EatenMealResponse(BaseModel):
+    plan: MealPlan
+
+
+# Toggle one meal. No Gemini call and no chat history.
+# Guests: session only. Signed-in: also that one flag on the saved plan,
+# at the same index. Does not copy the working plan's foods onto active_plan.
+@router.post("/plan/eaten", response_model=EatenMealResponse)
+def set_meal_eaten(
+    body: EatenMealRequest,
+    request: Request,
+    store: SessionStore = Depends(get_session_store),
+    user_store: UserStore = Depends(get_user_store),
+) -> EatenMealResponse:
+    session = store.get(body.session_id)
+    if session is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Unknown session_id. Call /plan first.",
+        )
+    if session.current_plan is None:
+        raise HTTPException(status_code=400, detail="No plan in session.")
+    if body.meal_index < 0 or body.meal_index >= len(session.current_plan.meals):
+        raise HTTPException(status_code=400, detail="meal_index is not in the plan.")
+
+    meals = list(session.current_plan.meals)
+    meals[body.meal_index] = meals[body.meal_index].model_copy(
+        update={"eaten": body.eaten}
+    )
+    plan = session.current_plan.model_copy(update={"meals": meals})
+    session.current_plan = plan
+    store.save(body.session_id, session)
+
+    username = get_optional_username(request)
+    if username:
+        user = user_store.get_user(username)
+        # No saved plan, or this index is past the saved list: session only.
+        # Do not append a meal and do not save the working foods.
+        if (
+            user is not None
+            and user.active_plan is not None
+            and body.meal_index < len(user.active_plan.meals)
+        ):
+            saved_meals = list(user.active_plan.meals)
+            saved_meals[body.meal_index] = saved_meals[body.meal_index].model_copy(
+                update={"eaten": body.eaten}
+            )
+            user_store.save_plan(
+                username,
+                user.active_plan.model_copy(update={"meals": saved_meals}),
+            )
+
+    return EatenMealResponse(plan=plan)
