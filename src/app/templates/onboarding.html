@@ -2373,7 +2373,7 @@
 
     async function resumeConversation() {
       const res = await fetch("/session/resume", { method: "POST" });
-      if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+      if (!res.ok) throw new Error(await apiError(res));
       const data = await res.json();
       state.sessionId = data.session_id;
       state.profile = data.profile;
@@ -2584,13 +2584,27 @@
             eaten: eaten,
           }),
         });
-        if (!res.ok) return;
-        const data = await res.json();
+        if (!res.ok) {
+          const err = $("plan-save-error");
+          err.textContent = "Couldn't update that meal. Try again.";
+          err.classList.remove("hidden");
+          return;
+        }
+        const data = await res.json().catch(() => ({}));
+        if (!data.plan) {
+          const err = $("plan-save-error");
+          err.textContent = "Couldn't update that meal. Try again.";
+          err.classList.remove("hidden");
+          return;
+        }
+        $("plan-save-error").classList.add("hidden");
         state.plan = data.plan;
         persistPlan(data.plan);
         renderPlan(state.plan);
       } catch (_) {
-        // Leave the card as it was. No Coach Chat line.
+        const err = $("plan-save-error");
+        err.textContent = "Couldn't update that meal. Try again.";
+        err.classList.remove("hidden");
       } finally {
         mealEatenInFlight = false;
       }
@@ -2656,12 +2670,17 @@
 
     // ---------- Onboarding / prefs submit ----------
     function formatApiError(detail) {
-      if (detail == null) return "Request failed";
+      if (detail == null || detail === "") return "";
       if (typeof detail === "string") return detail;
       if (Array.isArray(detail)) {
         return detail.map((d) => d.msg || JSON.stringify(d)).join("; ");
       }
       return String(detail);
+    }
+
+    async function apiError(res) {
+      const data = await res.json().catch(() => ({}));
+      return formatApiError(data.detail) || res.statusText || "Something went wrong. Try again.";
     }
 
     function hideImportPanel() {
@@ -2727,7 +2746,7 @@
             body: JSON.stringify(body),
           });
           const data = await res.json().catch(() => ({}));
-          if (!res.ok) throw new Error(formatApiError(data.detail) || res.statusText);
+          if (!res.ok) throw new Error(formatApiError(data.detail) || res.statusText || "Something went wrong. Try again.");
           state.profile = data.profile;
           state.calorieTarget = data.profile.calorie_target;
           if (state.sessionId) persistSession(state.sessionId, state.calorieTarget);
@@ -2740,7 +2759,7 @@
             body: JSON.stringify(payload),
           });
           const data = await res.json().catch(() => ({}));
-          if (!res.ok) throw new Error(formatApiError(data.detail) || res.statusText);
+          if (!res.ok) throw new Error(formatApiError(data.detail) || res.statusText || "Something went wrong. Try again.");
           enterPlanFromResponse(data, calorieTarget, payload);
         }
       } catch (ex) {
@@ -2825,7 +2844,7 @@
         }
 
         const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(formatApiError(data.detail) || res.statusText);
+        if (!res.ok) throw new Error(formatApiError(data.detail) || res.statusText || "Something went wrong. Try again.");
         hideImportPanel();
         enterPlanFromResponse(data, calorieTarget, payload);
       } catch (ex) {
@@ -2899,8 +2918,10 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ session_id: state.sessionId, message }),
         });
-        if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
-        const data = await res.json();
+        // `.catch` matters: a non-JSON body (the old plain-text 500) must not
+        // become "Unexpected token ... is not valid JSON" in the chat box.
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(formatApiError(data.detail) || res.statusText || "Something went wrong. Try again.");
 
         // The /chat endpoint returns a structured { plan }. Treat the plan
         // itself as the machine-readable reply and use its `notes` as the
@@ -2963,7 +2984,7 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ session_id: state.sessionId }),
         });
-        if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+        if (!res.ok) throw new Error(await apiError(res));
         markPlanClean();
       } catch (ex) {
         err.textContent = ex.message || "Could not save plan.";
@@ -2999,7 +3020,7 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ session_id: state.sessionId }),
         });
-        if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+        if (!res.ok) throw new Error(await apiError(res));
         const data = await res.json();
         state.plan = data.plan;
         state.messages = [];
@@ -3305,10 +3326,10 @@
             password: $("login-password").value,
           }),
         });
-        if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+        if (!res.ok) throw new Error(await apiError(res));
         // Cookie is set; /auth/me drives the same branches as boot.
         const meRes = await fetch("/auth/me");
-        if (!meRes.ok) throw new Error((await meRes.json()).detail || meRes.statusText);
+        if (!meRes.ok) throw new Error(await apiError(meRes));
         await enterLoggedInFromAuth(await meRes.json());
       } catch (ex) {
         err.textContent = ex.message;

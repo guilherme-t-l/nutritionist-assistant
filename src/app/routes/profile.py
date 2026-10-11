@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from agent.errors import SIGN_IN_TO_SAVE
 from agent.schemas import UserProfile
 from agent.session import SessionStore
 from agent.users import UserStore
@@ -34,11 +35,11 @@ def update_profile(
 ) -> ProfileUpdateResponse:
     username = get_optional_username(request)
     if not username:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+        raise HTTPException(status_code=401, detail=SIGN_IN_TO_SAVE)
 
     user = user_store.get_user(username)
     if user is None:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+        raise HTTPException(status_code=401, detail=SIGN_IN_TO_SAVE)
 
     # Strip session_id so we persist a clean UserProfile.
     profile = UserProfile.model_validate(

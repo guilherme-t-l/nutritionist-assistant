@@ -78,6 +78,9 @@ class FakeLLM:
 
     canned_reply: str = CANNED_PLAN_JSON
     calls: list[dict] = field(default_factory=list)
+    # When set, chat() records the call and then raises this instead of
+    # returning a plan. Used to prove Gemini failures become JSON errors.
+    error: Exception | None = None
 
     def chat(
         self,
@@ -93,6 +96,8 @@ class FakeLLM:
                 "response_schema": response_schema,
             }
         )
+        if self.error is not None:
+            raise self.error
         return self.canned_reply
 
 
@@ -151,6 +156,8 @@ class FakeSessionStore:
 
     def __init__(self) -> None:
         self._sessions: dict[str, Session] = {}
+        # When set, save() raises this instead of storing. create() is unaffected.
+        self.save_error: Exception | None = None
 
     def create(
         self,
@@ -166,6 +173,8 @@ class FakeSessionStore:
         return self._sessions.get(session_id)
 
     def save(self, session_id: str, session: Session) -> None:
+        if self.save_error is not None:
+            raise self.save_error
         self._sessions[session_id] = session
 
 

@@ -11,10 +11,19 @@
 from __future__ import annotations
 
 import json
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ValidationError
 
+from agent.errors import (
+    EXPIRED_SESSION,
+    INVALID_PLAN,
+    NO_PLAN_TO_EDIT,
+    NO_PLAN_TO_SAVE,
+    SIGN_IN_TO_SAVE,
+    StorageError,
+)
 from agent.llm import LLM, Message
 from agent.plan_import import ImportMode, extract_pdf_text, normalize_meal_plan
 from agent.prompts import (
@@ -26,12 +35,14 @@ from agent.schemas import MealPlan, UserProfile
 from agent.session import SessionStore
 from agent.users import UserStore
 from src.app.dependencies import get_llm, get_session_store, get_user_store
+from src.app.messages import friendly_validation
 from src.app.routes.auth import get_optional_username, personal_foods_for_request
 
 
 # An `APIRouter` is a mini-FastAPI-app — you attach routes here, and
 # `app.include_router(router)` in main.py merges them into the real app.
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 # The JSON shape /plan and /plan/import return: the session id the frontend
@@ -98,15 +109,10 @@ def create_plan(
         # Shortcut for `json.loads()` + `MealPlan(**data)` with validation.
         plan = MealPlan.model_validate_json(raw_reply)
     except ValidationError as exc:
-        # 502 = Bad Gateway — the correct code when an UPSTREAM service
-        # (Gemini) misbehaved. NOT 400 (would blame the user) or 500
-        # (would blame ourselves).
-        # `raise ... from exc` preserves the original traceback, so logs show
-        # "during handling of ValidationError, HTTPException raised".
-        raise HTTPException(
-            status_code=502,
-            detail=f"LLM returned an invalid MealPlan: {exc}",
-        ) from exc
+        # 502 = Bad Gateway — Gemini misbehaved. The page gets one sentence.
+        # `raise ... from exc` keeps the validation dump in the server log.
+        logger.exception("Gemini returned an invalid MealPlan")
+        raise HTTPException(status_code=502, detail=INVALID_PLAN) from exc
 
     # A new plan starts unchecked, even if the model marked a meal eaten.
     plan = _store_unchecked(plan)
@@ -116,13 +122,14 @@ def create_plan(
     # History stays cheap: the user task + a short note (not raw_reply JSON with all the meal plan history details).
     session.history.append(first_user_message)
     session.history.append(Message(role="model", content=build_assistant_note(plan)))
-    store.save(session_id, session)
-
-    # Logged-in only: persist after a successful plan is ready for the UI.
-    # Guests (no cookie) leave the users table untouched. Failures above never reach here.
     username = get_optional_username(request)
-    if username:
-        user_store.save_profile_and_plan(username, profile, plan)
+    try:
+        store.save(session_id, session)
+        # Logged-in only. Guests leave the users table untouched.
+        if username:
+            user_store.save_profile_and_plan(username, profile, plan)
+    except StorageError as exc:
+        raise StorageError(StorageError.AFTER_COACH) from exc
 
     return PlanResponse(session_id=session_id, plan=plan)
 
@@ -149,20 +156,23 @@ def _commit_imported_plan(
     # Use this plan and Edit this plan both start unchecked, including the
     # as-is JSON shortcut that never calls the model.
     plan = _store_unchecked(plan)
-    session_id, session = store.create(profile)
-    session.current_plan = plan
-    # History mirrors /plan: a short user task + assistant note (not full JSON).
-    if mode == "adapt":
-        user_turn = "Import my meal plan and edit it to match my preferences."
-    else:
-        user_turn = "Import my existing meal plan as-is."
-    session.history.append(Message(role="user", content=user_turn))
-    session.history.append(Message(role="model", content=build_assistant_note(plan)))
-    store.save(session_id, session)
+    try:
+        session_id, session = store.create(profile)
+        session.current_plan = plan
+        # History mirrors /plan: a short user task + assistant note (not full JSON).
+        if mode == "adapt":
+            user_turn = "Import my meal plan and edit it to match my preferences."
+        else:
+            user_turn = "Import my existing meal plan as-is."
+        session.history.append(Message(role="user", content=user_turn))
+        session.history.append(Message(role="model", content=build_assistant_note(plan)))
+        store.save(session_id, session)
 
-    username = get_optional_username(request)
-    if username:
-        user_store.save_profile_and_plan(username, profile, plan)
+        username = get_optional_username(request)
+        if username:
+            user_store.save_profile_and_plan(username, profile, plan)
+    except StorageError as exc:
+        raise StorageError(StorageError.AFTER_COACH) from exc
 
     return PlanResponse(session_id=session_id, plan=plan)
 
@@ -200,7 +210,9 @@ async def import_plan(
         try:
             profile = UserProfile.model_validate_json(profile_raw)
         except ValidationError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+            raise HTTPException(
+                status_code=422, detail=friendly_validation(exc.errors())
+            ) from exc
 
         mode = _parse_import_mode(form.get("mode"))
         upload = form.get("file")
@@ -233,11 +245,13 @@ async def import_plan(
         try:
             body = ImportPlanRequest.model_validate(await request.json())
         except ValidationError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+            raise HTTPException(
+                status_code=422, detail=friendly_validation(exc.errors())
+            ) from exc
         except json.JSONDecodeError as exc:
             raise HTTPException(
                 status_code=422,
-                detail="Request body must be JSON { profile, source_text, mode? }.",
+                detail="That request wasn't valid JSON.",
             ) from exc
         profile = body.profile
         source_text = body.source_text
@@ -284,20 +298,20 @@ def save_plan(
 ) -> SavePlanResponse:
     username = get_optional_username(request)
     if not username:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+        raise HTTPException(status_code=401, detail=SIGN_IN_TO_SAVE)
 
     user = user_store.get_user(username)
     if user is None:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+        raise HTTPException(status_code=401, detail=SIGN_IN_TO_SAVE)
 
     session = store.get(body.session_id)
     if session is None:
         raise HTTPException(
             status_code=404,
-            detail="Unknown session_id. Call /plan first.",
+            detail=EXPIRED_SESSION,
         )
     if session.current_plan is None:
-        raise HTTPException(status_code=400, detail="No plan in session to save.")
+        raise HTTPException(status_code=400, detail=NO_PLAN_TO_SAVE)
 
     user_store.save_plan(username, session.current_plan)
     return SavePlanResponse(ok=True)
@@ -322,11 +336,11 @@ def discard_plan(
 ) -> DiscardPlanResponse:
     username = get_optional_username(request)
     if not username:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+        raise HTTPException(status_code=401, detail=SIGN_IN_TO_SAVE)
 
     user = user_store.get_user(username)
     if user is None:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+        raise HTTPException(status_code=401, detail=SIGN_IN_TO_SAVE)
     if user.active_plan is None:
         raise HTTPException(
             status_code=400,
@@ -337,7 +351,7 @@ def discard_plan(
     if session is None:
         raise HTTPException(
             status_code=404,
-            detail="Unknown session_id. Call /plan first.",
+            detail=EXPIRED_SESSION,
         )
 
     # Session only — must not call any UserStore save method.
@@ -372,10 +386,10 @@ def set_meal_eaten(
     if session is None:
         raise HTTPException(
             status_code=404,
-            detail="Unknown session_id. Call /plan first.",
+            detail=EXPIRED_SESSION,
         )
     if session.current_plan is None:
-        raise HTTPException(status_code=400, detail="No plan in session.")
+        raise HTTPException(status_code=400, detail=NO_PLAN_TO_EDIT)
     if body.meal_index < 0 or body.meal_index >= len(session.current_plan.meals):
         raise HTTPException(status_code=400, detail="meal_index is not in the plan.")
 

@@ -7,9 +7,12 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, ValidationError
 
+from agent.errors import EXPIRED_SESSION, INVALID_PLAN, NO_PLAN_TO_EDIT, StorageError
 from agent.llm import LLM, Message
 from agent.prompts import build_assistant_note, build_edit_system_prompt
 from agent.schemas import Meal, MealPlan
@@ -20,6 +23,7 @@ from src.app.routes.auth import personal_foods_for_request
 
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 # The JSON shape the frontend sends to /chat.
@@ -81,12 +85,9 @@ def chat(
     # `is None` — use `is` (identity) for None checks, not `== None`. Faster,
     # and safer against weird classes that override `__eq__`.
     if session is None:
-        raise HTTPException(status_code=404, detail="Unknown session_id. Call /plan first.")
+        raise HTTPException(status_code=404, detail=EXPIRED_SESSION)
     if session.current_plan is None:
-        raise HTTPException(
-            status_code=400,
-            detail="No meal plan to edit. Call /plan first.",
-        )
+        raise HTTPException(status_code=400, detail=NO_PLAN_TO_EDIT)
 
     user_turn = Message(role="user", content=request.message)
     # `list + list` returns a NEW list — `session.history` isn't mutated here.
@@ -110,10 +111,8 @@ def chat(
     try:
         reply_plan = MealPlan.model_validate_json(raw_reply)
     except ValidationError as exc:
-        raise HTTPException(
-            status_code=502,
-            detail=f"LLM returned an invalid MealPlan: {exc}",
-        ) from exc
+        logger.exception("Gemini returned an invalid MealPlan")
+        raise HTTPException(status_code=502, detail=INVALID_PLAN) from exc
 
     # Eaten meals stay as they were sent. Every other meal keeps the reply.
     plan = _lock_eaten_meals(sent_plan, reply_plan)
@@ -122,6 +121,10 @@ def chat(
     session.history.append(user_turn)
     session.history.append(Message(role="model", content=build_assistant_note(plan)))
     # Must write back — sessions live in Supabase, not process memory.
-    store.save(request.session_id, session)
+    # If this fails, the reply existed only in this request.
+    try:
+        store.save(request.session_id, session)
+    except StorageError as exc:
+        raise StorageError(StorageError.AFTER_COACH) from exc
 
     return ChatResponse(plan=plan)

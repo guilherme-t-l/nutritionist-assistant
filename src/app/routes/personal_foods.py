@@ -9,6 +9,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
+from agent.errors import SIGN_IN_TO_SAVE
 from agent.schemas import PersonalFood, PersonalFoodDraft
 from agent.users import UserStore
 from src.app.dependencies import get_user_store
@@ -21,7 +22,7 @@ router = APIRouter()
 def _require_username(request: Request, user_store: UserStore) -> str:
     username = get_optional_username(request)
     if not username or user_store.get_user(username) is None:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+        raise HTTPException(status_code=401, detail=SIGN_IN_TO_SAVE)
     return username
 
 

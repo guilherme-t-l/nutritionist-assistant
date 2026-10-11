@@ -147,6 +147,7 @@ def test_plan_rejects_bad_profile(client: TestClient) -> None:
     )
 
     assert response.status_code == 422
+    assert response.json()["detail"] == "Calorie target is out of range."
 
 
 def test_plan_rejects_invalid_flavor_profile(client: TestClient) -> None:
@@ -161,3 +162,4 @@ def test_plan_rejects_invalid_flavor_profile(client: TestClient) -> None:
     )
 
     assert response.status_code == 422
+    assert response.json()["detail"] == "Flavors has a value that isn't allowed."

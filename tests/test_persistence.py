@@ -124,12 +124,14 @@ def test_save_plan_requires_auth(client: TestClient) -> None:
     session_id = plan_resp.json()["session_id"]
     response = client.post("/plan/save", json={"session_id": session_id})
     assert response.status_code == 401
+    assert response.json()["detail"] == "Sign in again to save this."
 
 
 def test_save_plan_unknown_session(client: TestClient) -> None:
     client.post("/login", json={"username": "demo1", "password": "password1"})
     response = client.post("/plan/save", json={"session_id": "does-not-exist"})
     assert response.status_code == 404
+    assert response.json()["detail"] == "This chat expired. Start a new plan."
 
 
 def test_discard_plan_restores_saved_after_chat(
@@ -181,6 +183,7 @@ def test_discard_plan_requires_auth(client: TestClient) -> None:
     session_id = plan_resp.json()["session_id"]
     response = client.post("/plan/discard", json={"session_id": session_id})
     assert response.status_code == 401
+    assert response.json()["detail"] == "Sign in again to save this."
 
 
 def test_discard_plan_unknown_session(client: TestClient) -> None:

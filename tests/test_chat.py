@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
+from agent.errors import EXPIRED_SESSION, INVALID_PLAN, UNEXPECTED, StorageError
+from agent.llm import LLMUnavailable
 from agent.schemas import MealPlan, UserProfile
 from tests.conftest import CANNED_PLAN_JSON, FakeLLM, FakeSessionStore, FakeUserStore
 
@@ -96,6 +98,7 @@ def test_chat_rejects_unknown_session(client: TestClient) -> None:
     )
 
     assert response.status_code == 404
+    assert response.json()["detail"] == EXPIRED_SESSION
 
 
 def test_chat_rejects_empty_message(client: TestClient) -> None:
@@ -111,6 +114,18 @@ def test_chat_rejects_empty_message(client: TestClient) -> None:
     )
 
     assert response.status_code == 422
+
+
+def test_chat_rejects_a_message_over_1000_characters(client: TestClient) -> None:
+    session_id = _new_plan(client)
+    response = client.post(
+        "/chat",
+        json={"session_id": session_id, "message": "a" * 1001},
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"] == (
+        "Message is too long. Keep it under 1,000 characters."
+    )
 
 
 def _canned_plan() -> MealPlan:
@@ -326,3 +341,93 @@ def test_plan_eaten_bad_index_or_missing_plan_is_400(
         json={"session_id": empty_id, "meal_index": 0, "eaten": True},
     )
     assert no_plan.status_code == 400
+
+
+def test_chat_returns_json_when_the_model_is_unavailable(
+    client: TestClient, fake_llm: FakeLLM, session_store: FakeSessionStore
+) -> None:
+    """A Gemini failure is JSON the page can show, and the saved plan stays put."""
+    session_id = _new_plan(client)
+    before = session_store.get(session_id)
+    assert before is not None
+    assert before.current_plan is not None
+    history_len = len(before.history)
+    notes = before.current_plan.notes
+
+    fake_llm.error = LLMUnavailable(
+        503,
+        "Gemini is busy (503 UNAVAILABLE). "
+        "The model is under high demand. Try again in a moment.",
+    )
+    response = client.post(
+        "/chat",
+        json={
+            "session_id": session_id,
+            "message": "swap dinner for something lighter",
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.headers["content-type"].startswith("application/json")
+    body = response.json()
+    assert body["detail"] == (
+        "Gemini is busy (503 UNAVAILABLE). "
+        "The model is under high demand. Try again in a moment."
+    )
+
+    after = session_store.get(session_id)
+    assert after is not None
+    assert after.current_plan is not None
+    assert len(after.history) == history_len
+    assert after.current_plan.notes == notes
+
+
+def test_chat_hides_an_unusable_plan(
+    client: TestClient, fake_llm: FakeLLM
+) -> None:
+    session_id = _new_plan(client)
+    fake_llm.canned_reply = "this is not a meal plan"
+    response = client.post(
+        "/chat",
+        json={"session_id": session_id, "message": "swap dinner"},
+    )
+    assert response.status_code == 502
+    assert response.json()["detail"] == INVALID_PLAN
+    assert "this is not a meal plan" not in response.text
+
+
+def test_chat_says_the_reply_was_not_saved(
+    client: TestClient, session_store: FakeSessionStore
+) -> None:
+    session_id = _new_plan(client)
+    session_store.save_error = StorageError()
+    response = client.post(
+        "/chat",
+        json={"session_id": session_id, "message": "swap dinner"},
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"] == StorageError.AFTER_COACH
+    assert "supabase" not in response.text.lower()
+
+
+def test_chat_hides_unexpected_errors(
+    client: TestClient, fake_llm: FakeLLM
+) -> None:
+    """The page gets one sentence. The secret stays out of the JSON body.
+
+    A handler for Exception is installed as Starlette's server-error handler,
+    which sends the JSON and then re-raises. raise_server_exceptions=False
+    lets the test read that JSON instead of seeing the re-raise.
+    """
+    from src.app.main import app
+
+    session_id = _new_plan(client)
+    fake_llm.error = RuntimeError("secret-token-from-the-database")
+    quiet = TestClient(app, raise_server_exceptions=False)
+    response = quiet.post(
+        "/chat",
+        json={"session_id": session_id, "message": "swap dinner"},
+    )
+    assert response.status_code == 500
+    assert response.json()["detail"] == UNEXPECTED
+    assert "secret-token" not in response.text

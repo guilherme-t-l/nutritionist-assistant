@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 
 from supabase import Client, create_client
 
+from agent.errors import guard_storage
 from agent.llm import Message
 from agent.schemas import MealPlan, UserProfile
 
@@ -52,6 +53,7 @@ def _history_from_json(raw: str | list | None) -> list[Message]:
 class SessionStore:
     """Repository for guest/logged-in conversation state in Supabase."""
 
+    @guard_storage
     def __init__(self, client: Client | None = None) -> None:
         if client is None:
             client = create_client(
@@ -60,6 +62,7 @@ class SessionStore:
             )
         self._client = client
 
+    @guard_storage
     def create(
         self,
         profile: UserProfile,
@@ -70,6 +73,7 @@ class SessionStore:
         self.save(session_id, session)
         return session_id, session
 
+    @guard_storage
     def get(self, session_id: str) -> Session | None:
         result = (
             self._client.table("sessions")
@@ -90,6 +94,7 @@ class SessionStore:
         history = _history_from_json(row["history_json"])
         return Session(profile=profile, current_plan=current_plan, history=history)
 
+    @guard_storage
     def save(self, session_id: str, session: Session) -> None:
         """Write the full session row. Routes must call this after mutating."""
         row = {

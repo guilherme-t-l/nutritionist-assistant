@@ -18,8 +18,10 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import Literal, Protocol
 
+import httpx
 from google import genai
 from google.genai import types
+from google.genai.errors import APIError
 from pydantic import BaseModel
 
 
@@ -35,6 +37,60 @@ Role = Literal["user", "model"]
 class Message:
     role: Role
     content: str
+
+
+# Gemini refused or could not answer (quota, overload, empty body, other API
+# error). Routes do not catch this themselves — the app turns it into JSON
+# `{"detail": ...}` so the page can show the sentence instead of crashing
+# on the plain-text "Internal Server Error" body.
+class LLMUnavailable(Exception):
+    def __init__(self, status_code: int, detail: str) -> None:
+        self.status_code = status_code
+        self.detail = detail
+        super().__init__(detail)
+
+
+def _gemini_failure_detail(exc: APIError) -> tuple[int, str]:
+    """Turn a Gemini HTTP error into a status code plus one readable sentence.
+
+    The code stays in the sentence so a tester can tell quota (429) from
+    overload (503) without opening the server log. Google's own message is
+    kept only for other codes, and only the first line — the 429 body is a
+    long quota dump that is useless in the chat box.
+    """
+    code = exc.code if isinstance(exc.code, int) else 502
+    status = exc.status or "ERROR"
+    http_status = code if 400 <= code <= 599 else 502
+
+    if code == 429:
+        return http_status, (
+            f"Gemini quota exceeded ({code} {status}). "
+            "This project's request limit is used up. Try again later."
+        )
+    if code == 503:
+        return http_status, (
+            f"Gemini is busy ({code} {status}). "
+            "The model is under high demand. Try again in a moment."
+        )
+    if code == 504:
+        return http_status, "Gemini took too long (504). Try again in a moment."
+    if code == 500:
+        return http_status, "Gemini had an internal error (500). Try again in a moment."
+    if code in (401, 403, 404):
+        return http_status, (
+            f"Couldn't reach Gemini ({code}). "
+            "The API key or model name needs a fix — see the server log."
+        )
+    if code == 400:
+        return http_status, (
+            "Gemini rejected the request (400). "
+            "Try again. If it keeps happening, see the server log."
+        )
+
+    message = (exc.message or "The model request failed.").strip().split("\n", 1)[0]
+    if len(message) > 240:
+        message = message[:240].rstrip() + "…"
+    return http_status, f"Gemini request failed ({code} {status}). {message}"
 
 
 # The "interface" every LLM implementation must satisfy.
@@ -101,21 +157,32 @@ class GeminiLLM:
             for m in messages
         ]
 
-        response = self._client.models.generate_content(
-            model=self._model,
-            contents=contents,
-            config=types.GenerateContentConfig(
-                system_instruction=system,
-                # Forces the model to reply with JSON matching the Pydantic
-                # schema. Without this we'd have to prompt-engineer the JSON
-                # format and hope — with it, Gemini is constrained by the SDK.
-                response_mime_type="application/json",
-                response_schema=response_schema,
-            ),
-        )
+        try:
+            response = self._client.models.generate_content(
+                model=self._model,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    system_instruction=system,
+                    # Forces the model to reply with JSON matching the Pydantic
+                    # schema. Without this we'd have to prompt-engineer the JSON
+                    # format and hope — with it, Gemini is constrained by the SDK.
+                    response_mime_type="application/json",
+                    response_schema=response_schema,
+                ),
+            )
+        except APIError as exc:
+            # `raise ... from exc` keeps Google's original error as the cause,
+            # so the server log still has the full quota or overload body.
+            status_code, detail = _gemini_failure_detail(exc)
+            raise LLMUnavailable(status_code, detail) from exc
+        except (httpx.HTTPError, TimeoutError, ConnectionError) as exc:
+            raise LLMUnavailable(
+                503,
+                "Couldn't reach Gemini. Check your connection and try again.",
+            ) from exc
 
         if not response.text:
-            raise RuntimeError("Gemini returned an empty response.")
+            raise LLMUnavailable(502, "Gemini returned an empty response. Try again.")
 
         # Dev-only: dump input + history + answer after the network call.
         # Off by default so normal runs (and FakeLLM tests) stay quiet.
@@ -141,8 +208,17 @@ class GeminiLLM:
 def get_llm() -> LLM:
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key or api_key == "your-key-here":
-        raise RuntimeError(
-            "GEMINI_API_KEY is not set. Put a real key in .env — "
-            "get one free at https://aistudio.google.com/apikey"
-        )
+        # Raised and immediately chained so the log names the missing key,
+        # while the page only gets the short sentence.
+        try:
+            raise RuntimeError(
+                "GEMINI_API_KEY is not set. Put a real key in .env — "
+                "get one free at https://aistudio.google.com/apikey"
+            )
+        except RuntimeError as exc:
+            raise LLMUnavailable(
+                401,
+                "Couldn't reach Gemini (401). "
+                "The API key or model name needs a fix — see the server log.",
+            ) from exc
     return GeminiLLM(api_key=api_key)

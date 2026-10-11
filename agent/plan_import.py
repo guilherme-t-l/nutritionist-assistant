@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import logging
 from io import BytesIO
 from typing import Literal
 
@@ -16,6 +17,7 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 from pypdf import PdfReader
 
+from agent.errors import INVALID_PLAN
 from agent.llm import LLM, Message
 from agent.prompts import (
     build_create_system_prompt,
@@ -26,6 +28,7 @@ from agent.prompts import (
 from agent.schemas import MealPlan, PersonalFood, UserProfile
 
 ImportMode = Literal["as_is", "adapt"]
+logger = logging.getLogger(__name__)
 
 # Below this many non-whitespace chars we treat a PDF as unreadable
 # (scanned / image-only / empty). OCR is out of scope.
@@ -137,7 +140,5 @@ def normalize_meal_plan(
     try:
         return MealPlan.model_validate_json(raw_reply)
     except ValidationError as exc:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Could not normalize the imported plan into a MealPlan: {exc}",
-        ) from exc
+        logger.exception("Gemini returned an invalid MealPlan")
+        raise HTTPException(status_code=502, detail=INVALID_PLAN) from exc
