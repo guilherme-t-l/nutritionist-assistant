@@ -116,9 +116,10 @@ class LLM(Protocol):
 
 # Real implementation that calls Google's Gemini API over HTTPS.
 class GeminiLLM:
-    # gemini-2.5-flash is the fast, cheap, free-tier model.
-    # Upgrade to gemini-2.5-pro for harder reasoning if ever needed.
-    DEFAULT_MODEL = "gemini-3.5-flash"
+    # Stable Gemini 3.6 Flash. Structured JSON is supported. Thinking
+    # defaults to medium, same as 3.5 Flash. 3.6 rejects a request whose
+    # last turn is role "model", so every caller must end on a user turn.
+    DEFAULT_MODEL = "gemini-3.6-flash"
 
     # Called once, from the get_llm() factory below, the first time anyone
     # needs an LLM in the process. Stores the SDK client so subsequent calls
