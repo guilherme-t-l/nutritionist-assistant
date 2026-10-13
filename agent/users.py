@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 
 from supabase import Client, create_client
 
+from agent.errors import guard_storage
 from agent.schemas import MealPlan, PersonalFood, UserProfile
 
 
@@ -64,6 +65,7 @@ def _dump_personal_foods(foods: list[PersonalFood]) -> str:
 class UserStore:
     """Tiny repository: credentials + durable profile/plan per username."""
 
+    @guard_storage
     def __init__(self, client: Client | None = None) -> None:
         if client is None:
             client = create_client(
@@ -94,6 +96,7 @@ class UserStore:
                 }
             ).execute()
 
+    @guard_storage
     def verify_credentials(self, username: str, password: str) -> bool:
         result = (
             self._client.table("users")
@@ -106,6 +109,7 @@ class UserStore:
             return False
         return result.data[0]["password"] == password
 
+    @guard_storage
     def get_user(self, username: str) -> UserRecord | None:
         result = (
             self._client.table("users")
@@ -134,6 +138,7 @@ class UserStore:
             personal_foods=_parse_personal_foods(row.get("personal_foods_json")),
         )
 
+    @guard_storage
     def save_profile(self, username: str, profile: UserProfile) -> None:
         """Update profile_json only — leaves active_plan_json alone."""
         (
@@ -143,6 +148,7 @@ class UserStore:
             .execute()
         )
 
+    @guard_storage
     def save_plan(self, username: str, plan: MealPlan) -> None:
         """Update active_plan_json only — leaves profile_json alone."""
         (
@@ -152,6 +158,7 @@ class UserStore:
             .execute()
         )
 
+    @guard_storage
     def save_profile_and_plan(
         self, username: str, profile: UserProfile, plan: MealPlan
     ) -> None:
@@ -168,6 +175,7 @@ class UserStore:
             .execute()
         )
 
+    @guard_storage
     def get_personal_foods(self, username: str) -> list[PersonalFood]:
         """Read the library only. Missing user or null column → []."""
         result = (
@@ -181,6 +189,7 @@ class UserStore:
             return []
         return _parse_personal_foods(result.data[0].get("personal_foods_json"))
 
+    @guard_storage
     def save_personal_foods(self, username: str, foods: list[PersonalFood]) -> None:
         """Replace personal_foods_json only — profile and active plan stay put."""
         (

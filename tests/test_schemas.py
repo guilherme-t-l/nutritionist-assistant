@@ -196,6 +196,35 @@ class TestMealPlan:
         with pytest.raises(ValidationError):
             MealPlan(meals=[])
 
+    def test_plan_json_without_eaten_parses_as_not_eaten(self) -> None:
+        # Old active_plan_json / current_plan_json has no eaten key.
+        # The default treats that meal as not eaten. No migration.
+        raw = """
+        {
+          "meals": [
+            {
+              "name": "Breakfast",
+              "description": "Saved before eaten existed.",
+              "ingredients": [
+                {"name": "rice", "quantity": "1 xícara", "calories": 200, "protein_g": 4, "carbs_g": 40, "fat_g": 1}
+              ]
+            },
+            {
+              "name": "Lunch",
+              "description": "Also old.",
+              "ingredients": [
+                {"name": "beans", "quantity": "1 concha", "calories": 180, "protein_g": 10, "carbs_g": 30, "fat_g": 1}
+              ]
+            }
+          ],
+          "notes": "Old plan."
+        }
+        """
+        plan = MealPlan.model_validate_json(raw)
+
+        assert len(plan.meals) == 2
+        assert all(meal.eaten is False for meal in plan.meals)
+
 
 class TestPersonalFood:
     def test_valid_pancake_parses_and_ingredients_default_to_empty(self) -> None:

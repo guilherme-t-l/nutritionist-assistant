@@ -7,10 +7,13 @@ exact phrases they emit — no LLM, no network, no fixtures.
 from __future__ import annotations
 
 from agent.prompts import (
+    _build_shared_context,
+    _edit_job_instructions,
     build_assistant_note,
     build_create_system_prompt,
     build_edit_system_prompt,
     build_initial_user_message,
+    format_personal_foods_section,
 )
 from agent.schemas import Food, Meal, MealPlan, PersonalFood, UserProfile
 
@@ -55,7 +58,7 @@ def test_system_prompt_includes_allergies_loudly() -> None:
 
     assert "peanuts" in prompt
     assert "shellfish" in prompt
-    assert "CRITICAL" in prompt
+    assert "Hard safety constraints" in prompt
 
 
 def test_system_prompt_uses_none_known_when_allergies_empty() -> None:
@@ -63,9 +66,9 @@ def test_system_prompt_uses_none_known_when_allergies_empty() -> None:
 
     prompt = build_create_system_prompt(profile)
 
-    # Template always includes the CRITICAL line; empty list → "none known".
-    assert "allergic to: none known" in prompt
-    assert "CRITICAL" in prompt
+    # The safety heading is always present; an empty list becomes "none known".
+    assert "Allergies: none known" in prompt
+    assert "Hard safety constraints" in prompt
 
 
 def test_system_prompt_mentions_calorie_target_and_cuisines_plural() -> None:
@@ -80,9 +83,8 @@ def test_system_prompt_mentions_calorie_target_and_cuisines_plural() -> None:
     assert "2800" in prompt
     assert "Bahian" in prompt
     assert "Japanese" in prompt
-    # The phrasing is plural even when there could be one cuisine; this
-    # locks in the "cuisines plural" wording.
-    assert "Cuisine preferences" in prompt
+    # The heading stays plural even when the profile has only one cuisine.
+    assert "Preferred cuisines" in prompt
     assert "gain muscle" in prompt
 
 
@@ -97,18 +99,17 @@ def test_system_prompt_keeps_allergies_and_dislikes_distinct() -> None:
 
     prompt = build_create_system_prompt(profile)
 
-    assert "CRITICAL" in prompt
+    assert "Hard safety constraints" in prompt
     assert "shellfish" in prompt
-    assert "AVOID WHEN POSSIBLE" in prompt
+    assert "Foods to avoid when reasonably possible" in prompt
     assert "cilantro" in prompt
-    # And crucially — they should NOT appear on the same rule line. The
-    # rough check: the CRITICAL block should NOT mention cilantro, and
-    # the AVOID block should NOT mention shellfish.
-    critical_start = prompt.index("CRITICAL")
-    avoid_start = prompt.index("AVOID WHEN POSSIBLE")
-    critical_block = prompt[critical_start:avoid_start]
-    avoid_block = prompt[avoid_start:]
-    assert "cilantro" not in critical_block
+    # Dislikes are listed first, then the safety heading. Slice each
+    # section so a dislike cannot hide on the allergy line, or the reverse.
+    avoid_start = prompt.index("Foods to avoid when reasonably possible")
+    safety_start = prompt.index("Hard safety constraints")
+    avoid_block = prompt[avoid_start:safety_start]
+    safety_block = prompt[safety_start:]
+    assert "cilantro" not in safety_block
     assert "shellfish" not in avoid_block
 
 
@@ -121,9 +122,8 @@ def test_system_prompt_uses_none_when_dislikes_empty() -> None:
 
     prompt = build_create_system_prompt(profile)
 
-    # Template always includes the AVOID line; empty list → "none".
-    assert "dislikes: none" in prompt
-    assert "AVOID WHEN POSSIBLE" in prompt
+    # The avoid line is always present; an empty list becomes "none".
+    assert "Foods to avoid when reasonably possible: none" in prompt
 
 
 def test_system_prompt_includes_macro_targets_when_set() -> None:
@@ -257,6 +257,84 @@ def test_create_prompt_states_create_job_and_omits_edit_plan() -> None:
 # --- Edit-only ---------------------------------------------------------------
 
 
+def test_edit_prompt_is_four_pieces_and_locks_eaten_meals_in_one_json() -> None:
+    profile = UserProfile(
+        goal="maintain",
+        calorie_target=2000,
+        allergies=["peanuts"],
+        meals_per_day=3,
+    )
+    eaten = Meal(
+        name="Breakfast",
+        description="Already eaten.",
+        eaten=True,
+        ingredients=[
+            Food(
+                name="tapioca",
+                quantity="1 unit",
+                calories=300,
+                protein_g=4,
+                carbs_g=50,
+                fat_g=8,
+            ),
+        ],
+    )
+    later = Meal(
+        name="Lunch",
+        description="Still open.",
+        eaten=False,
+        ingredients=[
+            Food(
+                name="rice",
+                quantity="1 xícara",
+                calories=200,
+                protein_g=4,
+                carbs_g=40,
+                fat_g=1,
+            ),
+        ],
+    )
+    plan = MealPlan(meals=[eaten, later], notes="Leave breakfast.")
+    food = _pancake()
+
+    prompt = build_edit_system_prompt(profile, plan, [food])
+    plan_json = plan.model_dump_json()
+    assert prompt == (
+        _build_shared_context(profile)
+        + format_personal_foods_section([food])
+        + _edit_job_instructions(profile.meals_per_day)
+        + plan_json
+    )
+    # Guest chat inserts an empty personal-foods piece. Still four pieces.
+    bare = build_edit_system_prompt(profile, plan)
+    assert bare == (
+        _build_shared_context(profile)
+        + format_personal_foods_section([])
+        + _edit_job_instructions(profile.meals_per_day)
+        + plan_json
+    )
+    assert prompt.count(plan_json) == 1
+    assert bare.count(plan_json) == 1
+    loaded = MealPlan.model_validate_json(plan_json)
+    assert loaded.meals[0].eaten is True
+    assert loaded.meals[1].eaten is False
+    assert "A meal with eaten true was already eaten." in prompt
+    assert "Copy it exactly." in prompt
+    assert "Do not rewrite, remove, or redistribute it." in prompt
+    assert (
+        "Fit the other meals around the calories and macros those eaten meals already use."
+        in prompt
+    )
+    assert (
+        "The reply's one plan JSON must still include every meal that is not eaten, rewritten to fit the day."
+        in prompt
+    )
+    assert "Do not return a plan that contains only the eaten meals." in prompt
+    assert "Remove a meal only when the user skipped a meal that is not eaten." in prompt
+    assert "If the user says they skipped a meal that is not eaten" in prompt
+    assert "If the user says they skipped a meal, treat it as not eaten" not in prompt
+
+
 def test_edit_prompt_includes_edit_job_and_current_plan() -> None:
     profile = UserProfile(goal="maintain", calorie_target=2000)
     plan = _sample_plan()
@@ -287,7 +365,7 @@ def test_edit_prompt_includes_shared_profile_constraints() -> None:
 
     assert "Brazilian nutritionist" in prompt
     assert "1800" in prompt
-    assert "CRITICAL" in prompt
+    assert "Hard safety constraints" in prompt
     assert "peanuts" in prompt
     # Usual count is guidance; create's hard lock must not appear in edit.
     assert "usual meal count is 4" in prompt

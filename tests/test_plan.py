@@ -91,9 +91,9 @@ def test_plan_forwards_full_profile_into_system_prompt(
     assert "savory" in system
     assert "umami" in system
     assert "140" in system
-    # And safety vs preference should NOT be merged.
-    assert "CRITICAL" in system
-    assert "AVOID WHEN POSSIBLE" in system
+    # Safety and preference stay on separate lines in the prompt.
+    assert "Hard safety constraints" in system
+    assert "Foods to avoid when reasonably possible" in system
 
 
 def test_plan_returns_requested_number_of_meals(
@@ -147,6 +147,7 @@ def test_plan_rejects_bad_profile(client: TestClient) -> None:
     )
 
     assert response.status_code == 422
+    assert response.json()["detail"] == "Calorie target is out of range."
 
 
 def test_plan_rejects_invalid_flavor_profile(client: TestClient) -> None:
@@ -161,3 +162,4 @@ def test_plan_rejects_invalid_flavor_profile(client: TestClient) -> None:
     )
 
     assert response.status_code == 422
+    assert response.json()["detail"] == "Flavors has a value that isn't allowed."

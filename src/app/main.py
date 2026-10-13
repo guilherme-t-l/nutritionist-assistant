@@ -11,12 +11,18 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
+
+from agent.errors import UNEXPECTED, StorageError
+from agent.llm import LLMUnavailable
+from src.app.messages import friendly_validation
 
 from src.app.routes import auth as auth_routes
 from src.app.routes import chat as chat_routes
@@ -29,10 +35,48 @@ from src.app.routes import profile as profile_routes
 # so the Gemini API key is available when we actually need it.
 load_dotenv()
 
+logger = logging.getLogger(__name__)
+
 
 # `FastAPI(...)` builds the app object. `title` + `version` show up in the
 # auto-generated docs at /docs (Swagger UI) and /redoc.
 app = FastAPI(title="Nutri Assistant", version="0.1.0")
+
+
+# Gemini failures used to escape as a plain-text 500 ("Internal Server Error").
+# The page then tried to parse that text as JSON and showed a parser error
+# instead of the real reason. This handler answers every route — /plan, /chat,
+# /plan/import — with JSON the page already knows how to display.
+@app.exception_handler(LLMUnavailable)
+async def llm_unavailable(_request: Request, exc: LLMUnavailable) -> JSONResponse:
+    # exc_info keeps Google's original error in the log. The page only gets
+    # the short sentence. Passing exc explicitly matters: this handler can
+    # run outside the `except` block, where logger.exception would see nothing.
+    logger.error("Gemini request failed: %s", exc.detail, exc_info=exc)
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+
+@app.exception_handler(StorageError)
+async def storage_failed(_request: Request, exc: StorageError) -> JSONResponse:
+    logger.error("database request failed: %s", exc.detail, exc_info=exc)
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+
+@app.exception_handler(RequestValidationError)
+def invalid_request(_request: Request, exc: RequestValidationError) -> JSONResponse:
+    # The raw field errors stay in the log. The page gets one sentence each.
+    detail = friendly_validation(exc.errors())
+    logger.warning("request validation failed: %s", exc.errors())
+    return JSONResponse(status_code=422, content={"detail": detail})
+
+
+@app.exception_handler(Exception)
+async def unexpected_error(_request: Request, exc: Exception) -> JSONResponse:
+    # Last resort for bugs we did not name. Starlette sends this JSON, then
+    # re-raises so the server log still prints the traceback.
+    logger.error("unhandled error", exc_info=exc)
+    return JSONResponse(status_code=500, content={"detail": UNEXPECTED})
+
 
 # `__file__` is the path to THIS file. `.parent` walks up one directory.
 # `/ "templates"` uses pathlib's overloaded `/` operator to join paths —
