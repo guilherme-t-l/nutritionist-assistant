@@ -2567,13 +2567,56 @@
       });
     }
 
-    let mealEatenInFlight = false;
+    // The circle flips on click. POST /plan/eaten still runs afterwards so the
+    // session (and, if signed in, the saved plan) catch up. Those writes go
+    // one at a time: the plan is one JSON blob, and two overlapping saves can
+    // drop a check. Chat, Save, and Discard await flushEatenWrites() because
+    // they read that session row and need the check to already be stored.
+    let eatenWriteChain = Promise.resolve();
+    // Meal index → eaten value not stored yet.
+    const pendingEaten = new Map();
+    // Meal index → last value known to match the server. Captured when a meal
+    // first becomes pending, and moved forward when an older click is stored,
+    // so a failed save puts back what the server has.
+    const confirmedEaten = new Map();
 
-    async function markMealEaten(mealIndex, eaten) {
-      if (mealEatenInFlight) return;
+    async function flushEatenWrites() {
+      let current;
+      do {
+        current = eatenWriteChain;
+        await current;
+      } while (current !== eatenWriteChain);
+    }
+
+    function markMealEaten(mealIndex, eaten) {
       if (!state.sessionId || !state.plan || !Array.isArray(state.plan.meals)) return;
       if (!Number.isInteger(mealIndex) || mealIndex < 0 || mealIndex >= state.plan.meals.length) return;
-      mealEatenInFlight = true;
+
+      const meal = state.plan.meals[mealIndex];
+      if (!!meal.eaten === eaten && !pendingEaten.has(mealIndex)) return;
+
+      if (!pendingEaten.has(mealIndex)) {
+        confirmedEaten.set(mealIndex, !!meal.eaten);
+      }
+      meal.eaten = eaten;
+      pendingEaten.set(mealIndex, eaten);
+      $("plan-save-error").classList.add("hidden");
+      persistPlan(state.plan);
+      renderPlan(state.plan);
+
+      eatenWriteChain = eatenWriteChain
+        .then(() => commitMealEaten(mealIndex))
+        .catch(() => {});
+    }
+
+    async function commitMealEaten(mealIndex) {
+      if (!pendingEaten.has(mealIndex)) return;
+      const eaten = pendingEaten.get(mealIndex);
+      if (!state.sessionId || !state.plan || !state.plan.meals || !state.plan.meals[mealIndex]) {
+        pendingEaten.delete(mealIndex);
+        confirmedEaten.delete(mealIndex);
+        return;
+      }
       try {
         const res = await fetch("/plan/eaten", {
           method: "POST",
@@ -2584,30 +2627,39 @@
             eaten: eaten,
           }),
         });
-        if (!res.ok) {
-          const err = $("plan-save-error");
-          err.textContent = "Couldn't update that meal. Try again.";
-          err.classList.remove("hidden");
-          return;
-        }
         const data = await res.json().catch(() => ({}));
-        if (!data.plan) {
-          const err = $("plan-save-error");
-          err.textContent = "Couldn't update that meal. Try again.";
-          err.classList.remove("hidden");
+        const stillCurrent = pendingEaten.get(mealIndex) === eaten;
+        if (!res.ok || !data.plan) {
+          if (stillCurrent) revertMealEaten(mealIndex);
           return;
         }
-        $("plan-save-error").classList.add("hidden");
-        state.plan = data.plan;
-        persistPlan(data.plan);
-        renderPlan(state.plan);
+        // Server stored this value. A newer click keeps its own circle.
+        if (!stillCurrent) {
+          confirmedEaten.set(mealIndex, eaten);
+          return;
+        }
+        pendingEaten.delete(mealIndex);
+        confirmedEaten.delete(mealIndex);
       } catch (_) {
-        const err = $("plan-save-error");
-        err.textContent = "Couldn't update that meal. Try again.";
-        err.classList.remove("hidden");
-      } finally {
-        mealEatenInFlight = false;
+        if (pendingEaten.get(mealIndex) !== eaten) return;
+        revertMealEaten(mealIndex);
       }
+    }
+
+    function revertMealEaten(mealIndex) {
+      const previous = confirmedEaten.has(mealIndex)
+        ? confirmedEaten.get(mealIndex)
+        : false;
+      pendingEaten.delete(mealIndex);
+      confirmedEaten.delete(mealIndex);
+      if (state.plan && state.plan.meals && state.plan.meals[mealIndex]) {
+        state.plan.meals[mealIndex].eaten = previous;
+        persistPlan(state.plan);
+        renderPlan(state.plan);
+      }
+      const err = $("plan-save-error");
+      err.textContent = "Couldn't update that meal. Try again.";
+      err.classList.remove("hidden");
     }
 
     function renderMeal(meal, index) {
@@ -2913,6 +2965,9 @@
       renderChat();
 
       try {
+        // The coach reads the session row. Finish any check still being saved
+        // so that row already has the circle the user just set.
+        await flushEatenWrites();
         const res = await fetch("/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -2979,6 +3034,8 @@
       state.savingPlan = true;
       updateSavePlanButton();
       try {
+        // Save copies the session row. Wait until a check just clicked is on it.
+        await flushEatenWrites();
         const res = await fetch("/plan/save", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -3015,6 +3072,9 @@
       state.discardingPlan = true;
       updateSavePlanButton();
       try {
+        // Discard restores the saved plan, which already received this check.
+        // Wait so a late save cannot write the check back onto a discarded session.
+        await flushEatenWrites();
         const res = await fetch("/plan/discard", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
